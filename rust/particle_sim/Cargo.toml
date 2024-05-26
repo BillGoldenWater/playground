@@ -1,0 +1,20 @@
+[package]
+name = "particle_sim"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.83"
+bytemuck = { version = "1.16.0", features = ["derive"] }
+cgmath = "0.18.0"
+dotenv = "0.15.0"
+functional_utils = { version = "0.1.0", path = "../functional_utils" }
+itertools = "0.12.1"
+rand = "0.8.5"
+rayon = "1.10.0"
+tokio = { version = "1.37.0", features = ["full"] }
+tracing = "0.1.40"
+tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
+wgpu = "0.20.0"
+wgpu_bitonic_sort = { version = "0.1.0", path = "../wgpu_bitonic_sort" }
+winit = "0.30.0"
