@@ -1,5 +1,4 @@
 use bytemuck::NoUninit;
-use cgmath::vec2;
 use itertools::Itertools as _;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, NoUninit)]
@@ -11,18 +10,20 @@ pub struct Point {
 
 impl Point {
     pub fn gen() -> Vec<Point> {
-        let points_num = 35000_f32;
+        let size = 50000_f32;
+        let spacing = 195_f32;
+        let points_num = (size / spacing).powi(2);
         let num = points_num.sqrt();
-        let spacing = 40000.0 / num;
+        let spacing = size / num;
         let half_spacing = spacing / 2.0;
 
-        let mut rng = rand::thread_rng();
-        let velocity_range = -100.0..100.0;
+        // let mut rng = rand::thread_rng();
+        // let velocity_range = -100.0..100.0;
 
-        let step = 0.001;
-        let rotate_radians = std::f32::consts::PI * 2.0 * (step / 360.0);
-
-        let center = vec2(20000.0, 20000.0);
+        // let step = 0.001;
+        // let rotate_radians = std::f32::consts::PI * 2.0 * (step / 360.0);
+        //
+        // let center = vec2(20000.0, 20000.0);
 
         let points = (0..points_num as usize)
             .into_iter()
@@ -30,12 +31,12 @@ impl Point {
                 let idx = idx as f32;
                 let x = (idx % num).floor() * spacing + half_spacing;
                 let y = (idx / num).floor() * spacing + half_spacing;
-                let pos = vec2(x, y) - center;
-                let rotated = vec2(
-                    pos.x * rotate_radians.cos() - pos.y * rotate_radians.sin(),
-                    pos.x * rotate_radians.sin() + pos.y * rotate_radians.cos(),
-                );
-                let rotate = (rotated - pos) / step * 10.0;
+                // let pos = vec2(x, y) - center;
+                // let rotated = vec2(
+                //     pos.x * rotate_radians.cos() - pos.y * rotate_radians.sin(),
+                //     pos.x * rotate_radians.sin() + pos.y * rotate_radians.cos(),
+                // );
+                // let rotate = (rotated - pos) / step * 10.0;
                 Point {
                     velocity: [0.0, 0.0],
                     // velocity: [rotate.x, rotate.y],

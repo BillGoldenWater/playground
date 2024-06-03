@@ -1,7 +1,6 @@
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
-    time::Instant,
 };
 
 use tracing::info;
@@ -69,9 +68,6 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 if let Some(viewport) = self.viewport.as_mut() {
                     // let start = Instant::now();
-                    viewport.renderer.update(&self.ctx);
-                    viewport.renderer.update(&self.ctx);
-                    viewport.renderer.update(&self.ctx);
                     viewport.renderer.update(&self.ctx);
                     // let update = start.elapsed();
                     viewport.render(&self.ctx).expect("failed to render");

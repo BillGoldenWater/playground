@@ -63,7 +63,7 @@ fn vs_main(
 
     let clip_pos = (vec2(pos.x, pos.y) / boundary_x - vec2(0.5, 0.5)) * vec2(2.0, 2.0);
 
-    return VertexOut(vec4<f32>(clip_pos + idx / (80 * size_scale), 0, 1), idx, velocity);
+    return VertexOut(vec4<f32>(clip_pos + idx / (70 * size_scale), 0, 1), idx, velocity);
 }
 
 @fragment
@@ -86,13 +86,13 @@ fn fs_main(
 
 const edge_width = 0.125;
 const max_velocity_visual = 2000f;
-const boundary_x = 40000.0;
-const boundary_y = 40000.0; 
+const boundary_x = 80000.0;
+const boundary_y = 80000.0; 
 const grid_size = 300.0;
-const size_scale = 4.0;
+const size_scale = 8.0;
 const a = 200f;
 const b = 100000f;
-const gravity = 500.0;
+const gravity = 250.0;
 const speed = 1.0;
 
 const gravity_center_count = 1u;
@@ -227,7 +227,8 @@ fn update(idx: u32, time_delta: f32) -> Point {
     // p.pos.y = select(p.pos.y, collide_y_pos, collide_y);
     p.velocity.x *= select(1.0, -1.0, collide_x);
     p.velocity.y *= select(1.0, -1.0, collide_y);
-    p.velocity *= select(1.0, f32(param.boundary_collision_factor) * 0.01, collide_x || collide_y);
+    // p.velocity *= select(1.0, f32(param.boundary_collision_factor) * 0.01, collide_x || collide_y);
+    p.velocity *= select(1.0, f32(param.boundary_collision_factor) * 0.01, y_out_bottom);
 
     // passthrough box
     // if x_out_up {
