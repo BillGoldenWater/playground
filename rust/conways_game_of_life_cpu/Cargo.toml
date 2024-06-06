@@ -1,0 +1,12 @@
+[package]
+name = "conways_game_of_life_cpu"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+image = "0.25.1"
+rand = { version = "0.8.5", features = ["small_rng"] }
+rayon = "1.10.0"
+softbuffer = "0.4.3"
+tokio = { version = "1.38.0", features = ["full"] }
+winit = "0.30.0"
