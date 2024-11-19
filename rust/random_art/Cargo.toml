@@ -1,0 +1,15 @@
+[package]
+name = "random_art"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.93"
+ciborium = "0.2.2"
+image = "0.25.5"
+itertools = "0.13.0"
+rand = "0.8.5"
+rayon = "1.10.0"
+serde = { version = "1.0.215", features = ["derive"] }
+softbuffer = "0.4.6"
+winit = "0.30.5"
