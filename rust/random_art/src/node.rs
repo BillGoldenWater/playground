@@ -1,8 +1,5 @@
 use core::f64;
-use std::{
-    ops::{Add, Div, Mul, Sub},
-    u8,
-};
+use std::ops::{Add, Div, Mul, Sub};
 
 use serde::{Deserialize, Serialize};
 
@@ -124,6 +121,12 @@ impl Value {
 impl From<f64> for Value {
     fn from(value: f64) -> Self {
         Self::Single(value)
+    }
+}
+
+impl From<[f64; 3]> for Value {
+    fn from(value: [f64; 3]) -> Self {
+        Self::Rgb(value[0], value[1], value[2])
     }
 }
 

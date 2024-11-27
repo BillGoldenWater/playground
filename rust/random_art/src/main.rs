@@ -4,26 +4,33 @@ use std::{collections::HashMap, num::NonZeroU32, sync::Arc};
 use anyhow::Context;
 use grammar::{Grammer, Rule, RuleId, RuleItem, RuleNode};
 use image::RgbImage;
-use node::Node;
+use node::{Node, Value};
 use rand::{random, rngs::StdRng, SeedableRng};
 use rayon::iter::{
     IndexedParallelIterator, IntoParallelRefMutIterator, ParallelBridge,
     ParallelIterator,
 };
 use softbuffer::Surface;
+use tracing::{debug_span, instrument, warn};
+use tracing_subscriber::{fmt::format::FmtSpan, EnvFilter};
 use winit::{
     application::ApplicationHandler,
-    dpi::PhysicalSize,
+    dpi::{LogicalSize, PhysicalSize},
     event::{ElementState, WindowEvent},
-    event_loop::EventLoop,
+    event_loop::{ActiveEventLoop, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
-    window::Window,
+    window::{Fullscreen, Window},
 };
 
 pub mod grammar;
 pub mod node;
 
 fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::fmt()
+        .with_env_filter(EnvFilter::from_default_env())
+        .with_span_events(FmtSpan::ENTER | FmtSpan::CLOSE)
+        .init();
+
     let event_loop =
         EventLoop::new().expect("failed to create event loop");
 
@@ -57,9 +64,6 @@ struct RenderParameters {
     save: bool,
     save_scaled: bool,
 
-    height: u32,
-    width: u32,
-
     seed: u64,
 
     offset: (f64, f64),
@@ -72,9 +76,6 @@ impl Default for RenderParameters {
             save: false,
             save_scaled: false,
 
-            height: 1,
-            width: 1,
-
             seed: 10409678234255179372,
 
             offset: (-1.0, -1.0),
@@ -83,11 +84,14 @@ impl Default for RenderParameters {
     }
 }
 
+const CANVAS_SIZE: usize = 512;
 struct AppState {
     window: Arc<Window>,
     surface: Surface<Arc<Window>, Arc<Window>>,
 
     grammar: Grammer,
+
+    render_buf: Box<[[f64; 3]; CANVAS_SIZE * CANVAS_SIZE]>,
 
     param: RenderParameters,
     last_param: Option<RenderParameters>,
@@ -196,10 +200,14 @@ impl AppState {
         );
         let grammar = Grammer { rules };
 
+        let render_buf =
+            Box::new([Default::default(); CANVAS_SIZE * CANVAS_SIZE]);
+
         Self {
             window,
             surface,
             grammar,
+            render_buf,
             param: RenderParameters::default(),
             last_param: None,
         }
@@ -213,10 +221,9 @@ impl AppState {
                 NonZeroU32::new(height.max(1)).unwrap(),
             )
             .expect("failed to resize surface");
-        self.param.width = width;
-        self.param.height = height;
     }
 
+    #[instrument(level = "debug", skip(self))]
     pub fn update(&mut self) {
         let need_update = if let Some(ref last) = self.last_param {
             *last != self.param
@@ -224,41 +231,67 @@ impl AppState {
             true
         };
 
-        if !need_update {
-            println!("ignored");
-            return;
+        if need_update {
+            self.render();
         }
 
+        let span = debug_span!("scaling").entered();
+        let PhysicalSize { width, height } = self.window.inner_size();
         let mut buf = self
             .surface
             .buffer_mut()
             .expect("failed to get surface buffer");
 
-        let RenderParameters {
-            offset, dimensions, ..
-        } = self.param;
-        if offset.0 < -1.0
-            || offset.1 < -1.0
-            || dimensions.0 + offset.0 > 1.0
-            || dimensions.1 + offset.1 > 1.0
-        {
-            println!("param {:#?}", self.param);
-            println!("param out of bounds, restoring");
-            if let Some(last) = self.last_param {
-                self.param = last;
-            } else {
-                self.param = RenderParameters::default();
-            }
+        if (width * height) as usize != buf.len() {
+            warn!("window dimention and buffer size didn't match, skipping render");
+            return;
         }
+
+        let size_f = CANVAS_SIZE as f64;
+        let x_scaler = size_f / width as f64;
+        let y_scaler = size_f / height as f64;
+        buf.par_iter_mut().enumerate().for_each(|(idx, px)| {
+            let x = idx as u32 % width;
+            let y = idx as u32 / width;
+            let x = (x as f64 * x_scaler) as usize;
+            let y = (y as f64 * y_scaler) as usize;
+
+            let v = Value::from(self.render_buf[y * CANVAS_SIZE + x]);
+            *px = u32::from_be_bytes(v.to_argb8());
+        });
+        drop(span);
+
+        let span = debug_span!("present").entered();
+        buf.present().expect("failed to present buffer");
+        drop(span);
+
+        self.last_param = Some(self.param);
+    }
+
+    #[instrument(level = "debug", skip(self))]
+    pub fn render(&mut self) {
+        //let RenderParameters {
+        //    offset, dimensions, ..
+        //} = self.param;
+        //if offset.0 < -1.0
+        //    || offset.1 < -1.0
+        //    || dimensions.0 + offset.0 > 1.0
+        //    || dimensions.1 + offset.1 > 1.0
+        //{
+        //    println!("param {:#?}", self.param);
+        //    println!("param out of bounds, restoring");
+        //    if let Some(last) = self.last_param {
+        //        self.param = last;
+        //    } else {
+        //        self.param = RenderParameters::default();
+        //    }
+        //}
 
         println!("rendering {:#?}", self.param);
 
         let RenderParameters {
             save,
             save_scaled,
-
-            height,
-            width,
 
             seed,
 
@@ -303,21 +336,21 @@ impl AppState {
         let mut rng = StdRng::seed_from_u64(seed);
         let expr = self.grammar.gen(&mut rng, RuleId(0), 12);
 
-        buf.par_iter_mut().enumerate().for_each(|(idx, px)| {
-            // argb
-            let x = idx as u32 % width;
-            let y = idx as u32 / height;
-            let x = x as f64 / width as f64;
-            let y = y as f64 / height as f64;
-            let x = offset.0 + x * dimensions.0;
-            let y = offset.1 + y * dimensions.1;
-            let v = expr.eval(x, y);
-            *px = u32::from_be_bytes(v.to_argb8());
-        });
+        let size = CANVAS_SIZE as u32;
+        let size_f = size as f64;
+        self.render_buf.par_iter_mut().enumerate().for_each(
+            |(idx, px)| {
+                let x = idx as u32 % size;
+                let y = idx as u32 / size;
+                let x = x as f64 / size_f;
+                let y = y as f64 / size_f;
 
-        buf.present().expect("failed to present buffer");
-
-        self.last_param = Some(self.param);
+                let x = x * dimensions.0 + offset.0;
+                let y = y * dimensions.0 + offset.1;
+                let v = expr.eval(x, y);
+                *px = v.to_rgb();
+            },
+        );
     }
 }
 
@@ -325,8 +358,14 @@ struct RandomArt {
     state: Option<AppState>,
 }
 
+impl RandomArt {
+    pub fn close(&mut self, event_loop: &ActiveEventLoop) {
+        self.state = None;
+        event_loop.exit();
+    }
+}
+
 const INIT_SIZE: (u32, u32) = (512, 512);
-const MAX_SIZE: (u32, u32) = (1024, 1024);
 
 impl ApplicationHandler for RandomArt {
     fn resumed(
@@ -337,10 +376,7 @@ impl ApplicationHandler for RandomArt {
         let window: Arc<_> = event_loop
             .create_window(
                 Window::default_attributes()
-                    .with_inner_size(PhysicalSize::new(width, height))
-                    .with_max_inner_size(PhysicalSize::new(
-                        MAX_SIZE.0, MAX_SIZE.1,
-                    )),
+                    .with_inner_size(LogicalSize::new(width, height)),
             )
             .expect("failed to create window")
             .into();
@@ -415,16 +451,38 @@ impl ApplicationHandler for RandomArt {
                             state.param.seed = random::<u64>();
                         }
                         PhysicalKey::Code(KeyCode::Space) => {
-                            let _ = state.window.request_inner_size(
-                                PhysicalSize::new(
-                                    INIT_SIZE.0,
-                                    INIT_SIZE.0,
-                                ),
-                            );
+                            //let _ = state.window.request_inner_size(
+                            //    LogicalSize::new(
+                            //        INIT_SIZE.0,
+                            //        INIT_SIZE.0,
+                            //    ),
+                            //);
                             let default = RenderParameters::default();
                             state.param.offset = default.offset;
                             state.param.dimensions = default.dimensions;
                         }
+                        PhysicalKey::Code(KeyCode::KeyF) => {
+                            if state.window.fullscreen().is_none() {
+                                state.window.set_fullscreen(Some(
+                                    Fullscreen::Borderless(None),
+                                ));
+                            } else {
+                                state.window.set_fullscreen(None);
+                            }
+                        }
+                        PhysicalKey::Code(KeyCode::KeyQ) => {
+                            self.close(event_loop);
+                            return;
+                        }
+                        PhysicalKey::Code(KeyCode::Escape) => {
+                            if state.window.fullscreen().is_some() {
+                                state.window.set_fullscreen(None);
+                            } else {
+                                self.close(event_loop);
+                                return;
+                            }
+                        }
+                        // zooming and moving
                         PhysicalKey::Code(KeyCode::KeyU) => {
                             do_zoom(&mut state.param, true, &update_off);
                         }
@@ -459,6 +517,7 @@ impl ApplicationHandler for RandomArt {
                                 &update_off,
                             );
                         }
+                        // saving to disk
                         PhysicalKey::Code(KeyCode::KeyS) => {
                             state.param.save_scaled = true;
                         }
@@ -470,8 +529,7 @@ impl ApplicationHandler for RandomArt {
                     state.window.request_redraw();
                 }
                 WindowEvent::CloseRequested => {
-                    self.state = None;
-                    event_loop.exit();
+                    self.close(event_loop);
                 }
                 _ => {}
             }
@@ -496,9 +554,9 @@ fn render(
         .par_bridge()
         .for_each(|(x, y, px)| {
             let x = x as f64 / width as f64;
-            let y = y as f64 / height as f64;
-            let x = offset.0 + x * dimensions.0;
-            let y = offset.1 + y * dimensions.1;
+            let y = y as f64 / width as f64;
+            let x = x * dimensions.0 + offset.0;
+            let y = y * dimensions.0 + offset.0;
             let v = expr.eval(x, y);
             px.0 = v.to_rgb8();
         });
