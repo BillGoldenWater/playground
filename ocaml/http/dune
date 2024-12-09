@@ -1,0 +1,5 @@
+(executable
+ (name main)
+ (libraries unix str sexplib)
+ (preprocess
+  (pps ppx_sexp_conv)))
