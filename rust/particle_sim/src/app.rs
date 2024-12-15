@@ -31,17 +31,26 @@ pub struct App {
 }
 
 impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+    fn resumed(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+    ) {
         let window: Arc<_> = event_loop
             .create_window(
-                WindowAttributes::default().with_inner_size(PhysicalSize::new(1200, 1200)),
+                WindowAttributes::default()
+                    .with_inner_size(PhysicalSize::new(1200, 1200)),
             )
             .expect("failed to crate window")
             .into();
 
         self.viewport = Some(
             Viewport::new(window.clone(), &self.ctx, |ctx, surface| {
-                Renderer::new(ctx, surface, self.state.clone(), self.command_queue.clone())
+                Renderer::new(
+                    ctx,
+                    surface,
+                    self.state.clone(),
+                    self.command_queue.clone(),
+                )
             })
             .expect("failed to create viewport"),
         );
@@ -67,12 +76,21 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 if let Some(viewport) = self.viewport.as_mut() {
-                    // let start = Instant::now();
+                    //let start = std::time::Instant::now();
                     viewport.renderer.update(&self.ctx);
-                    // let update = start.elapsed();
+                    //let update = start.elapsed();
                     viewport.render(&self.ctx).expect("failed to render");
-                    // let render = start.elapsed() - update;
-                    // println!("update: {: >8.2?}, render: {: >8.2?}", update, render);
+                    //let render = start.elapsed() - update;
+                    //println!(
+                    //    "update: {: >8.2?}, render: {: >8.2?}",
+                    //    update, render
+                    //);
+                    //while !self
+                    //    .ctx
+                    //    .device
+                    //    .poll(wgpu::MaintainBase::Poll)
+                    //    .is_queue_empty()
+                    //{}
                     if !self.paused {
                         viewport.window.request_redraw();
                     }
@@ -82,8 +100,10 @@ impl ApplicationHandler for App {
                 if let Some(viewport) = self.viewport.as_mut() {
                     let mut state = self.state.lock().unwrap();
                     let size = viewport.window.inner_size();
-                    state.mouse_pos[0] = position.x as f32 / size.width as f32;
-                    state.mouse_pos[1] = 1.0 - position.y as f32 / size.height as f32;
+                    state.mouse_pos[0] =
+                        position.x as f32 / size.width as f32;
+                    state.mouse_pos[1] =
+                        1.0 - position.y as f32 / size.height as f32;
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
@@ -99,74 +119,92 @@ impl ApplicationHandler for App {
             WindowEvent::KeyboardInput {
                 event: keyboard_event,
                 ..
-            } if keyboard_event.state == ElementState::Released => match keyboard_event.logical_key
-            {
-                Key::Character(key) => match key.as_str() {
-                    "r" => {
-                        let mut cmd_queue = self.command_queue.lock().unwrap();
-                        cmd_queue.push_back(Command::Reset);
-                    }
-                    "c" => {
-                        let mut state = self.state.lock().unwrap();
-                        state.global_velocity_damping -= 1;
-                        info!("global_velocity_damping: {}", state.global_velocity_damping);
-                    }
-                    "h" => {
-                        let mut state = self.state.lock().unwrap();
-                        state.global_velocity_damping += 1;
-                        info!("global_velocity_damping: {}", state.global_velocity_damping);
-                    }
-                    "C" => {
-                        let mut state = self.state.lock().unwrap();
-                        state.global_velocity_damping -= 10;
-                        info!("global_velocity_damping: {}", state.global_velocity_damping);
-                    }
-                    "H" => {
-                        let mut state = self.state.lock().unwrap();
-                        state.global_velocity_damping += 10;
-                        info!("global_velocity_damping: {}", state.global_velocity_damping);
-                    }
-                    _ => {}
-                },
-                Key::Named(key) => match key {
-                    NamedKey::ArrowUp => {
-                        let mut state = self.state.lock().unwrap();
-                        state.boundary_collision_factor += 1;
-                        info!(
-                            "boundary_collision_factor: {}",
-                            state.boundary_collision_factor
-                        );
-                    }
-                    NamedKey::ArrowDown => {
-                        let mut state = self.state.lock().unwrap();
-                        state.boundary_collision_factor =
-                            state.boundary_collision_factor.saturating_sub(1);
-                        info!(
-                            "boundary_collision_factor: {}",
-                            state.boundary_collision_factor
-                        );
-                    }
-                    NamedKey::ArrowRight => {
-                        if let Some(viewport) = self.viewport.as_ref() {
-                            viewport.window.request_redraw();
-                            info!("requesting new frame");
+            } if keyboard_event.state == ElementState::Released => {
+                match keyboard_event.logical_key {
+                    Key::Character(key) => match key.as_str() {
+                        "r" => {
+                            let mut cmd_queue =
+                                self.command_queue.lock().unwrap();
+                            cmd_queue.push_back(Command::Reset);
                         }
-                    }
-                    NamedKey::Space => {
-                        self.paused = !self.paused;
-                        if !self.paused {
-                            if let Some(viewport) = self.viewport.as_ref() {
+                        "c" => {
+                            let mut state = self.state.lock().unwrap();
+                            state.global_velocity_damping -= 1;
+                            info!(
+                                "global_velocity_damping: {}",
+                                state.global_velocity_damping
+                            );
+                        }
+                        "h" => {
+                            let mut state = self.state.lock().unwrap();
+                            state.global_velocity_damping += 1;
+                            info!(
+                                "global_velocity_damping: {}",
+                                state.global_velocity_damping
+                            );
+                        }
+                        "C" => {
+                            let mut state = self.state.lock().unwrap();
+                            state.global_velocity_damping -= 10;
+                            info!(
+                                "global_velocity_damping: {}",
+                                state.global_velocity_damping
+                            );
+                        }
+                        "H" => {
+                            let mut state = self.state.lock().unwrap();
+                            state.global_velocity_damping += 10;
+                            info!(
+                                "global_velocity_damping: {}",
+                                state.global_velocity_damping
+                            );
+                        }
+                        _ => {}
+                    },
+                    Key::Named(key) => match key {
+                        NamedKey::ArrowUp => {
+                            let mut state = self.state.lock().unwrap();
+                            state.boundary_collision_factor += 1;
+                            info!(
+                                "boundary_collision_factor: {}",
+                                state.boundary_collision_factor
+                            );
+                        }
+                        NamedKey::ArrowDown => {
+                            let mut state = self.state.lock().unwrap();
+                            state.boundary_collision_factor = state
+                                .boundary_collision_factor
+                                .saturating_sub(1);
+                            info!(
+                                "boundary_collision_factor: {}",
+                                state.boundary_collision_factor
+                            );
+                        }
+                        NamedKey::ArrowRight => {
+                            if let Some(viewport) = self.viewport.as_ref()
+                            {
                                 viewport.window.request_redraw();
+                                info!("requesting new frame");
                             }
                         }
-                        info!("paused: {}", self.paused);
+                        NamedKey::Space => {
+                            self.paused = !self.paused;
+                            if !self.paused {
+                                if let Some(viewport) =
+                                    self.viewport.as_ref()
+                                {
+                                    viewport.window.request_redraw();
+                                }
+                            }
+                            info!("paused: {}", self.paused);
+                        }
+                        _ => {}
+                    },
+                    _ => {
+                        println!("{keyboard_event:?}")
                     }
-                    _ => {}
-                },
-                _ => {
-                    println!("{keyboard_event:?}")
                 }
-            },
+            }
             _ => {}
         }
     }

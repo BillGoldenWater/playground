@@ -1,10 +1,13 @@
 use bytemuck::cast_slice;
 use param::Param;
 use wgpu::{
-    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, Buffer, CommandEncoderDescriptor, ComputePassDescriptor, ComputePipeline,
-    ComputePipelineDescriptor, Device, PipelineCompilationOptions, PipelineLayoutDescriptor,
-    PushConstantRange, Queue, ShaderModuleDescriptor, ShaderSource, ShaderStages,
+    BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout,
+    BindGroupLayoutDescriptor, BindGroupLayoutEntry, Buffer,
+    CommandBuffer, CommandEncoderDescriptor, ComputePassDescriptor,
+    ComputePipeline, ComputePipelineDescriptor, Device,
+    PipelineCompilationOptions, PipelineLayoutDescriptor,
+    PushConstantRange, Queue, ShaderModuleDescriptor, ShaderSource,
+    ShaderStages,
 };
 
 pub mod param;
@@ -37,38 +40,48 @@ impl BitonicSorter {
             }
         });
 
-        let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Some("bitonic sort bind group layout"),
-            entries: &[BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
+        let bind_group_layout =
+            device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+                label: Some("bitonic sort bind group layout"),
+                entries: &[BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage {
+                            read_only: false,
+                        },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+            });
 
-        let bind_group = Self::create_bind_group(device, target_buffer, &bind_group_layout);
+        let bind_group = Self::create_bind_group(
+            device,
+            target_buffer,
+            &bind_group_layout,
+        );
 
-        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("bitonic sort compute pipeline layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            push_constant_ranges: &[PushConstantRange {
-                stages: ShaderStages::COMPUTE,
-                range: 0..(4 * 3),
-            }],
-        });
+        let pipeline_layout =
+            device.create_pipeline_layout(&PipelineLayoutDescriptor {
+                label: Some("bitonic sort compute pipeline layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[PushConstantRange {
+                    stages: ShaderStages::COMPUTE,
+                    range: 0..(4 * 3),
+                }],
+            });
 
-        let pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some("bitonic sort compute pipeline"),
-            layout: Some(&pipeline_layout),
-            module: &shader,
-            entry_point: "bitonic_sort_op",
-            compilation_options: PipelineCompilationOptions::default(),
-        });
+        let pipeline =
+            device.create_compute_pipeline(&ComputePipelineDescriptor {
+                label: Some("bitonic sort compute pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: "bitonic_sort_op",
+                compilation_options: PipelineCompilationOptions::default(
+                ),
+            });
 
         Self {
             bind_group_layout,
@@ -92,25 +105,44 @@ impl BitonicSorter {
         })
     }
 
-    pub fn change_buffer(&mut self, device: &Device, target_buffer: &Buffer) {
-        self.bind_group = Self::create_bind_group(device, target_buffer, &self.bind_group_layout)
+    pub fn change_buffer(
+        &mut self,
+        device: &Device,
+        target_buffer: &Buffer,
+    ) {
+        self.bind_group = Self::create_bind_group(
+            device,
+            target_buffer,
+            &self.bind_group_layout,
+        )
     }
 
     pub fn sort(&self, device: &Device, queue: &Queue, data_len: u32) {
-        let max_size = device.limits().max_compute_workgroups_per_dimension;
+        queue.submit([self.sort_command_buffer(device, data_len)]);
+    }
+
+    pub fn sort_command_buffer(
+        &self,
+        device: &Device,
+        data_len: u32,
+    ) -> CommandBuffer {
+        let max_size =
+            device.limits().max_compute_workgroups_per_dimension;
         let max_size_f64 = max_size as f64;
 
         let stage_num = (data_len as f64).log2().ceil() as u32;
 
-        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
-            label: Some("bitonic sort command encoder"),
-        });
+        let mut encoder =
+            device.create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("bitonic sort command encoder"),
+            });
 
         {
-            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-                label: Some("bitonic sort compute pass"),
-                timestamp_writes: None,
-            });
+            let mut pass =
+                encoder.begin_compute_pass(&ComputePassDescriptor {
+                    label: Some("bitonic sort compute pass"),
+                    timestamp_writes: None,
+                });
 
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_pipeline(&self.pipeline);
@@ -143,7 +175,7 @@ impl BitonicSorter {
             }
         }
 
-        queue.submit([encoder.finish()]);
+        encoder.finish()
     }
 }
 
@@ -151,7 +183,8 @@ impl BitonicSorter {
 mod tests {
     use rand::{Rng as _, SeedableRng};
     use wgpu::{
-        util::DeviceExt as _, BufferAddress, BufferUsages, Features, MapMode, RequestAdapterOptions,
+        util::DeviceExt as _, BufferAddress, BufferUsages, Features,
+        MapMode, RequestAdapterOptions,
     };
 
     use super::*;
@@ -168,7 +201,8 @@ mod tests {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     required_limits: adapter.limits(),
-                    required_features: adapter.features() | Features::PUSH_CONSTANTS,
+                    required_features: adapter.features()
+                        | Features::PUSH_CONSTANTS,
                     ..Default::default()
                 },
                 None,
@@ -181,26 +215,36 @@ mod tests {
         // prepare
         let (device, queue) = init_ctx().await;
 
-        let data_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("bitonic sort test data buffer"),
-            contents: cast_slice(&data),
-            usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
-        });
+        let data_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("bitonic sort test data buffer"),
+                contents: cast_slice(&data),
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+            },
+        );
 
-        let data_map_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("bitonic sort test data mapping buffer"),
-            contents: cast_slice(&data),
-            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
-        });
+        let data_map_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("bitonic sort test data mapping buffer"),
+                contents: cast_slice(&data),
+                usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            },
+        );
 
         // GPU sort
-        let sorter = BitonicSorter::new(&device, &data_buffer, "value: u32", "a.value > b.value");
+        let sorter = BitonicSorter::new(
+            &device,
+            &data_buffer,
+            "value: u32",
+            "a.value > b.value",
+        );
         sorter.sort(&device, &queue, data.len() as u32);
 
         // copy buffer
-        let mut encoder = device.create_command_encoder(&CommandEncoderDescriptor {
-            label: Some("command encoder"),
-        });
+        let mut encoder =
+            device.create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("command encoder"),
+            });
         encoder.copy_buffer_to_buffer(
             &data_buffer,
             0,

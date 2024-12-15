@@ -1,7 +1,10 @@
 use anyhow::{anyhow, Context};
 use functional_utils::FunctionalUtils;
 use tracing::info;
-use wgpu::{Adapter, Device, Features, Instance, PowerPreference, Queue, RequestAdapterOptions};
+use wgpu::{
+    Adapter, Device, Features, Instance, PowerPreference, Queue,
+    RequestAdapterOptions,
+};
 
 #[derive(Debug)]
 pub struct WgpuContext {
@@ -29,7 +32,8 @@ impl WgpuContext {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     required_limits: adapter.limits(),
-                    required_features: adapter.features() | Features::PUSH_CONSTANTS,
+                    required_features: adapter.features()
+                        | Features::PUSH_CONSTANTS,
                     ..Default::default()
                 },
                 None,

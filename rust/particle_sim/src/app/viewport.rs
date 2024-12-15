@@ -2,7 +2,10 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Context};
 use functional_utils::FunctionalUtils;
-use wgpu::{Device, PresentMode, Surface, SurfaceConfiguration, TextureViewDescriptor};
+use wgpu::{
+    Device, PresentMode, Surface, SurfaceConfiguration,
+    TextureViewDescriptor,
+};
 use winit::{dpi::PhysicalSize, window::Window};
 
 use self::renderer::Renderer;
@@ -30,7 +33,11 @@ impl Viewport {
             .context("failed to create render surface")?;
         let size = window.inner_size();
         let mut config = surface
-            .get_default_config(&ctx.adapter, size.width.max(1), size.height.max(1))
+            .get_default_config(
+                &ctx.adapter,
+                size.width.max(1),
+                size.height.max(1),
+            )
             .ok_or(anyhow!("failed to get default surface config"))?;
         config.present_mode = PresentMode::Immediate;
 
@@ -57,7 +64,8 @@ impl Viewport {
             .surface
             .get_current_texture()
             .context("failed to get next swapchain texture")?;
-        let view = frame.texture.create_view(&TextureViewDescriptor::default());
+        let view =
+            frame.texture.create_view(&TextureViewDescriptor::default());
 
         self.renderer.render(ctx, &view);
         frame.present();

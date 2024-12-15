@@ -25,8 +25,18 @@ impl Point {
         //
         // let center = vec2(20000.0, 20000.0);
 
-        let points = (0..points_num as usize)
-            .into_iter()
+        // let points = vec![
+        //     Point {
+        //         pos: [5000.0, 5000.0],
+        //         velocity: [0.0, 0.0],
+        //     },
+        //     Point {
+        //         pos: [5000.0, 5250.0],
+        //         velocity: [0.0, 0.0],
+        //     },
+        // ];
+
+        (0..points_num as usize)
             .map(move |idx| {
                 let idx = idx as f32;
                 let x = (idx % num).floor() * spacing + half_spacing;
@@ -50,19 +60,6 @@ impl Point {
                                  ] */
                 }
             })
-            .collect_vec();
-
-        // let points = vec![
-        //     Point {
-        //         pos: [5000.0, 5000.0],
-        //         velocity: [0.0, 0.0],
-        //     },
-        //     Point {
-        //         pos: [5000.0, 5250.0],
-        //         velocity: [0.0, 0.0],
-        //     },
-        // ];
-
-        points
+            .collect_vec()
     }
 }

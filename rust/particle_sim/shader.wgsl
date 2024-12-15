@@ -38,19 +38,20 @@ struct VertexOut {
     @builtin(position)
     pos: vec4<f32>,
     @location(0)
-    position: vec2<f32>,
+    v_pos: vec2<f32>,
     @location(1)
-    @interpolate(flat)
-    velocity: vec2<f32>,
+    center: vec2<f32>,
+    @location(2)
+    color: vec4<f32>,
 }
 
 @vertex
 fn vs_main(
     @builtin(vertex_index) in_vertex_index: u32,
-    @location(0) pos: vec2<f32>,
+    @location(0) point_pos: vec2<f32>,
     @location(1) velocity: vec2<f32>,
 ) -> VertexOut {
-    var indexes = array(
+    var vertices = array(
         vec2(-1.0, 1.0),
         vec2(-1.0, -1.0),
         vec2(1.0, -1.0),
@@ -59,41 +60,57 @@ fn vs_main(
         vec2(1.0, 1.0),
     );
 
-    let idx = indexes[in_vertex_index];
+    let point_pos_clip = (point_pos * boundary_scaler - 0.5) * 2.0;
+    let vertex_pos = vertices[in_vertex_index] * point_radius * sqrt(2.0) + point_pos_clip;
 
-    let clip_pos = (vec2(pos.x, pos.y) / boundary_x - vec2(0.5, 0.5)) * vec2(2.0, 2.0);
+    let speed = length(velocity) / max_velocity_visual;
+    let red = speed;
+    let green = max(1 - speed, 0.0);
+    let color = vec4<f32>(red, green, 0.0, 1.0) ;
 
-    return VertexOut(vec4<f32>(clip_pos + idx / (70 * size_scale), 0, 1), idx, velocity);
+    return VertexOut(
+        vec4<f32>(vertex_pos, 0, 1),
+        vertex_pos.xy,
+        point_pos_clip,
+        color,
+    );
 }
 
 @fragment
 fn fs_main(
     info: VertexOut,
 ) -> @location(0) vec4<f32> {
-    let dst = distance(info.position, vec2<f32>(0, 0));
-    let in_range = f32(dst < 1.0);
+    let dst = distance(info.v_pos, info.center);
+    let in_range = f32(dst < point_radius);
 
-    let solid = f32(dst < 1 - edge_width);
-    let alpha = max(solid, smoothstep(0.0, 1.0, fract((1 - dst) / edge_width)));
+    let alpha = smoothstep(
+        point_radius,
+        point_radius - point_radius * edge_width,
+        dst
+    );
 
-    let speed = length(info.velocity) / max_velocity_visual;
-    let red = speed;
-    let green = max(1 - speed, 0.0);
-
-    return vec4<f32>(red, green * 0.5, 0.0, in_range * alpha);
-    // return vec4<f32>(0xd7 / 255.0, 0x07 / 255.0, 0x51 / 255.0, in_range * alpha);
+    return vec4<f32>(info.color.rgb, alpha * in_range);
 }
 
-const edge_width = 0.125;
+// percent
+const edge_width = 0.1;
 const max_velocity_visual = 2000f;
-const boundary_x = 80000.0;
-const boundary_y = 80000.0; 
+const boundary_size = 80000.0;
+const boundary_x = boundary_size;
+const boundary_y = boundary_size; 
 const grid_size = 300.0;
-const size_scale = 8.0;
+const point_size = 195.0;
 const a = 200f;
-const b = 100000f;
+const b = 50000f;
 const gravity = 250.0;
 const speed = 1.0;
+
+const boundary_scaler = 1.0 / vec2<f32>(boundary_x, boundary_y);
+const point_radius = point_size * boundary_scaler.x;
+// const point_radius_squared = point_radius * point_radius;
+
+const mouse_radius = boundary_size / 10f;
+const mouse_strength = 20000f;
 
 const gravity_center_count = 1u;
 const gravity_centers = array<vec2<f32>, gravity_center_count>(
@@ -172,14 +189,19 @@ fn update(idx: u32, time_delta: f32) -> Point {
     // }
 
     let mouse_pos = param.mouse_pos * vec2(boundary_x, boundary_y);
-    let to_mouse_distance = distance(p.pos, mouse_pos);
-    var to_mouse = (mouse_pos - p.pos) / to_mouse_distance;
+    let to_mouse_distance_squared = distanse_squared(mouse_pos, p.pos);
+    let mouse_in_range = to_mouse_distance_squared < pow(mouse_radius, 2f);
+    if param.mouse_press > 0 && mouse_in_range {
+        let to_mouse_distance = sqrt(to_mouse_distance_squared);
+        var to_mouse = mouse_pos - p.pos;
+        to_mouse = select(vec2(0f), to_mouse / to_mouse_distance, to_mouse_distance > 0.00001);
 
-    let mouse_dir = (f32(param.mouse_press) - 1.5) * -2.0;
-    var mouse_acc = to_mouse * gravity * mouse_dir * 10;
+        let mouse_dir = (f32(param.mouse_press) - 1.5) * -2.0;
+        var mouse_acc = mouse_dir * mouse_strength;
 
-    let scale_by_distance = to_mouse_distance / 5000;
-    acc += select(vec2(0.0), (mouse_acc / scale_by_distance), param.mouse_press > 0);
+        let scaler = 1 - (to_mouse_distance / mouse_radius);
+        acc += (to_mouse * mouse_acc - p.velocity) * scaler;
+    }
 
     let grid_id = point_to_grid_id(p);
     var grid_offsets = grid_offsets;
@@ -285,4 +307,8 @@ fn point_to_grid_id(p: Point) -> vec2<i32> {
 fn grid_id_to_hash(id: vec2<i32>) -> u32 {
     let hash = u32(id.x) * 15823 + u32(id.y) + 9737333;
     return hash % arrayLength(&points_hash_data);
+}
+
+fn distanse_squared(a: vec2<f32>, b: vec2<f32>) -> f32 {
+    return pow(a.x - b.x, 2f) + pow(a.y - b.y, 2f);
 }
