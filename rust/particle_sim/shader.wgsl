@@ -94,23 +94,24 @@ fn fs_main(
 
 // percent
 const edge_width = 0.1;
-const max_velocity_visual = 2000f;
-const boundary_size = 80000.0;
+const max_velocity_visual = 140f;
+const boundary_size = 1000.0;
 const boundary_x = boundary_size;
 const boundary_y = boundary_size; 
-const grid_size = 300.0;
-const point_size = 195.0;
-const a = 200f;
-const b = 50000f;
-const gravity = 250.0;
-const speed = 1.0;
+const boundary_margin = boundary_size * 0.2;
+const grid_size = 3.34f;
+const point_size = 2.0f;
+const D = 0.409f;
+const Z = 2.59f;
+const gravity = 1f;
+// const speed = 1.0;
 
 const boundary_scaler = 1.0 / vec2<f32>(boundary_x, boundary_y);
 const point_radius = point_size * boundary_scaler.x;
 // const point_radius_squared = point_radius * point_radius;
 
-const mouse_radius = boundary_size / 10f;
-const mouse_strength = 20000f;
+const mouse_radius = point_size * 25;
+const mouse_strength = max_velocity_visual;
 
 const gravity_center_count = 1u;
 const gravity_centers = array<vec2<f32>, gravity_center_count>(
@@ -174,81 +175,88 @@ fn calc_limit(p: Point) -> LimitInfo {
     );
 }
 
+fn force(distance: f32) -> f32 {
+    var zd = Z / distance;
+    return 24f * D * (2f * pow(zd, 12f) - pow(zd, 6f)) * (1f / distance);
+}
+
 fn update(idx: u32, time_delta: f32) -> Point {
     var p = points[idx];
     var pos = p.pos;
     // p.pos += p.velocity * 1f / 1000f;
 
-    var acc = vec2<f32>(0.0, -gravity);
+    // var acc = vec2<f32>(0.0, -gravity);
+    var acc = vec2<f32>(0.0);
 
-    // var gravity_centers = gravity_centers;
-    // for (var i = 0u; i < gravity_center_count; i += 1u) {
-    //     let center = gravity_centers[i];
-    //     let to_center = normalize(center - p.pos);
-    //     acc += to_center * gravity;
-    // }
+    var gravity_centers = gravity_centers;
+    for (var i = 0u; i < gravity_center_count; i += 1u) {
+        let center = gravity_centers[i];
+        if any(center != pos) {
+            let to_center = normalize(center - pos);
+            acc += to_center * gravity;
+        }
+    }
 
     let mouse_pos = param.mouse_pos * vec2(boundary_x, boundary_y);
-    let to_mouse_distance_squared = distanse_squared(mouse_pos, p.pos);
+    let to_mouse_distance_squared = distanse_squared(mouse_pos, pos);
     let mouse_in_range = to_mouse_distance_squared < pow(mouse_radius, 2f);
-    if param.mouse_press > 0 && mouse_in_range {
+    let not_eq_mouse_pos = any(mouse_pos != pos);
+    if param.mouse_press > 0 && mouse_in_range && not_eq_mouse_pos {
         let to_mouse_distance = sqrt(to_mouse_distance_squared);
-        var to_mouse = mouse_pos - p.pos;
-        to_mouse = select(vec2(0f), to_mouse / to_mouse_distance, to_mouse_distance > 0.00001);
+        let to_mouse = normalize(mouse_pos - pos);
 
         let mouse_dir = (f32(param.mouse_press) - 1.5) * -2.0;
         var mouse_acc = mouse_dir * mouse_strength;
 
-        let scaler = 1 - (to_mouse_distance / mouse_radius);
+        let scaler = to_mouse_distance / mouse_radius;
         acc += (to_mouse * mouse_acc - p.velocity) * scaler;
     }
 
+    let hash_len = arrayLength(&points_hash_data);
     let grid_id = point_to_grid_id(p);
     var grid_offsets = grid_offsets;
     for (var offset_idx = 0u; offset_idx < grid_offset_count; offset_idx += 1u) {
         let id = grid_id + grid_offsets[offset_idx];
-        let hash = grid_id_to_hash(id);
-        let start_idx = points_hash_index[hash];
+        let grid_hash = grid_id_to_hash(id);
 
-        for (var hash_idx = start_idx; hash_idx < arrayLength(&points_hash_data); hash_idx += 1u) {
-            let point_hash = points_hash_data[hash_idx];
-            if point_hash.hash != hash {
-                break;
-            }
-
-            let point_idx = point_hash.index;
+        var hash_idx = points_hash_index[grid_hash];
+        var cur_point_hash = points_hash_data[hash_idx];
+        while cur_point_hash.hash == grid_hash && hash_idx < hash_len {
+            let point_idx = cur_point_hash.index;
             let other_p = points[point_idx];
+            let other_p_pos = other_p.pos;
 
-            if point_idx == idx || distance(other_p.pos, p.pos) > grid_size {
-                continue;
+            let dst = distance(pos, other_p_pos);
+            if dst <= grid_size && point_idx != idx {
+                let repel_direction = normalize(pos - other_p_pos);
+                let accl = repel_direction * force(dst);
+                acc += accl;
             }
 
-            let dst = distance(p.pos, other_p.pos);
-            let force = b * (pow(a / dst, 12f) - pow(a / dst, 6f));
-
-            let repel_direction = normalize(p.pos - other_p.pos);
-            let accl = repel_direction * force;
-            acc += accl;
+            hash_idx += 1u;
+            cur_point_hash = points_hash_data[hash_idx];
         }
     }
 
     p.velocity += acc * time_delta;
     // p.velocity = acc;
 
-    let x_out_up = (p.pos.x > boundary_x && p.velocity.x > 0);
-    let y_out_up = (p.pos.y > boundary_y && p.velocity.y > 0);
-    let x_out_bottom = (p.pos.x < 0 && p.velocity.x < 0);
-    let y_out_bottom = (p.pos.y < 0 && p.velocity.y < 0);
+    let x_out_up = (pos.x > boundary_x && p.velocity.x > 0);
+    let y_out_up = (pos.y > boundary_y && p.velocity.y > 0);
+    let x_out_bottom = (pos.x < 0 && p.velocity.x < 0);
+    let y_out_bottom = (pos.y < 0 && p.velocity.y < 0);
 
     // collide box
-    let collide_x = x_out_up || x_out_bottom;
-    let collide_y = y_out_up || y_out_bottom;
+    // let collide_x = x_out_up || x_out_bottom;
+    // let collide_y = y_out_up || y_out_bottom;
     // let collide_x_pos = select(.0, boundary_x, x_out_up) + select(.0, .0, x_out_bottom);
     // let collide_y_pos = select(.0, boundary_y, y_out_up) + select(.0, .0, y_out_bottom);
-    // p.pos.x = select(p.pos.x, collide_x_pos, collide_x);
-    // p.pos.y = select(p.pos.y, collide_y_pos, collide_y);
-    p.velocity.x *= select(1.0, -1.0, collide_x);
-    p.velocity.y *= select(1.0, -1.0, collide_y);
+    // pos.x = select(pos.x, collide_x_pos, collide_x);
+    // pos.y = select(pos.y, collide_y_pos, collide_y);
+    let flip_x = (x_out_up && sign(p.velocity.x) != -1) || (x_out_bottom && sign(p.velocity.x) != 1);
+    let flip_y = (y_out_up && sign(p.velocity.y) != -1) || (y_out_bottom && sign(p.velocity.y) != 1);
+    p.velocity.x *= select(1.0, -1.0, flip_x);
+    p.velocity.y *= select(1.0, -1.0, flip_y);
     // p.velocity *= select(1.0, f32(param.boundary_collision_factor) * 0.01, collide_x || collide_y);
     p.velocity *= select(1.0, f32(param.boundary_collision_factor) * 0.01, y_out_bottom);
 
@@ -268,7 +276,18 @@ fn update(idx: u32, time_delta: f32) -> Point {
 
     p.velocity *= f32(param.global_velocity_damping) * 0.0001;
 
+    if length(p.velocity) > max_velocity_visual {
+        p.velocity = vec2(max_velocity_visual * 0.5) * vec2(sign(p.velocity.x), sign(p.velocity.y));
+    }
+
     p.pos = pos + p.velocity * time_delta;
+
+    let x_in = p.pos.x < boundary_x + boundary_margin && p.pos.x > -boundary_margin;
+    let y_in = p.pos.y < boundary_y + boundary_margin && p.pos.y > -boundary_margin;
+    if !(x_in && y_in) {
+        p.pos = vec2(1);
+        p.velocity = vec2(1);
+    }
 
     return p;
 }

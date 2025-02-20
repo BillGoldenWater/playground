@@ -1,6 +1,7 @@
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use tracing::info;
@@ -28,6 +29,11 @@ pub struct App {
     pub paused: bool,
 
     pub viewport: Option<Viewport>,
+
+    pub last_report: Instant,
+    pub frame_count: u64,
+    pub tick_multiply: u64,
+    pub perf_offset: i64,
 }
 
 impl ApplicationHandler for App {
@@ -77,7 +83,9 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 if let Some(viewport) = self.viewport.as_mut() {
                     //let start = std::time::Instant::now();
-                    viewport.renderer.update(&self.ctx);
+                    for _ in 0..self.tick_multiply {
+                        viewport.renderer.update(&self.ctx);
+                    }
                     //let update = start.elapsed();
                     viewport.render(&self.ctx).expect("failed to render");
                     //let render = start.elapsed() - update;
@@ -91,6 +99,35 @@ impl ApplicationHandler for App {
                     //    .poll(wgpu::MaintainBase::Poll)
                     //    .is_queue_empty()
                     //{}
+                    self.frame_count += 1;
+                    let elapsed =
+                        self.last_report.elapsed().as_secs_f64();
+                    if elapsed >= 1.0 {
+                        let fps = self.frame_count as f64 / elapsed;
+                        println!(
+                            "fps: {:.2}, tps: {:.2}, tick_multiply: {}",
+                            fps,
+                            fps * self.tick_multiply as f64,
+                            self.tick_multiply,
+                        );
+                        self.frame_count = 0;
+                        self.last_report = Instant::now();
+
+                        if fps > 80.0 {
+                            self.perf_offset += 1;
+                        } else if fps < 60.0 {
+                            self.perf_offset -= 1;
+                        } else {
+                            self.perf_offset = 0;
+                        }
+
+                        if self.perf_offset >= 2 {
+                            self.tick_multiply += 1;
+                        } else if self.perf_offset <= -2 {
+                            self.tick_multiply =
+                                (self.tick_multiply - 2).max(1);
+                        }
+                    }
                     if !self.paused {
                         viewport.window.request_redraw();
                     }

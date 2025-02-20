@@ -3,6 +3,7 @@
 use std::{
     collections::VecDeque,
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use anyhow::Context;
@@ -42,9 +43,15 @@ async fn run() -> anyhow::Result<()> {
         paused: false,
 
         viewport: None,
+
+        frame_count: 0,
+        last_report: Instant::now(),
+        tick_multiply: 1,
+        perf_offset: 0,
     };
 
-    let event_loop = EventLoop::new().context("failed to initialize event loop")?;
+    let event_loop =
+        EventLoop::new().context("failed to initialize event loop")?;
     event_loop.set_control_flow(ControlFlow::Wait);
     event_loop
         .run_app(&mut app)

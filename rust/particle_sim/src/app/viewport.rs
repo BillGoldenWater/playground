@@ -41,6 +41,8 @@ impl Viewport {
             .ok_or(anyhow!("failed to get default surface config"))?;
         config.present_mode = PresentMode::Immediate;
 
+        surface.configure(&ctx.device, &config);
+
         let renderer = build_renderer(ctx, &surface);
 
         Self {

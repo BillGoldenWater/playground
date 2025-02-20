@@ -7,8 +7,10 @@ struct Data {
 struct Param {
     dimension_size: u32,
 
+    stage: u32,
     step: u32,
-    op_len: u32,
+    step_log2: u32,
+    step_mod_mask: u32,
 }
 
 var<push_constant> param: Param;
@@ -20,19 +22,16 @@ fn bitonic_sort_op(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let z = global_id.z * param.dimension_size * param.dimension_size;
     let op_id = global_id.x + y + z;
 
-    let op_len = param.op_len;
+    let stage = param.stage;
+    let step = param.step;
+    let step_log2 = param.step_log2;
 
-    let op_offset_group = (op_id / op_len) * op_len * 2;
-    let op_offset_op = op_id % op_len;
-    let op_offset = op_offset_group + op_offset_op;
-
-    let op_size_max = op_len * 2;
-
-    let op_size_step_1 = (op_size_max - ((op_id * 2) % op_size_max)) - 1;
-    let op_size = select(op_len, op_size_step_1, param.step == 1);
-
-    let left = op_offset;
-    let right = (op_offset + op_size);
+    let offset = (op_id >> step_log2) << (step_log2 + 1);
+    let step_remainder = op_id & param.step_mod_mask;
+    let left = offset + step_remainder;
+    let right_first_step = offset + stage - 1 - step_remainder;
+    let right_other = left + step;
+    let right = select(right_other, right_first_step, stage >> 1 == step);
 
     if right >= arrayLength(&data) {
         return;
@@ -42,9 +41,9 @@ fn bitonic_sort_op(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let b = data[right];
 
     let need_swap = a.value > b.value;
+
     if need_swap {
-        let temp = data[left];
-        data[left] = data[right];
-        data[right] = temp;
+        data[left] = b;
+        data[right] = a;
     }
 }

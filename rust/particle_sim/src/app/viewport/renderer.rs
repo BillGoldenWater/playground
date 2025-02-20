@@ -202,8 +202,9 @@ impl Renderer {
                 label: Some("calc hash data pipeline"),
                 layout: Some(&compute_pipeline_layout),
                 module: &shader,
-                entry_point: "calc_hash_data",
+                entry_point: Some("calc_hash_data"),
                 compilation_options: Default::default(),
+                cache: None,
             });
 
         let calc_hash_index_pipeline =
@@ -211,8 +212,9 @@ impl Renderer {
                 label: Some("calc hash index pipeline"),
                 layout: Some(&compute_pipeline_layout),
                 module: &shader,
-                entry_point: "calc_hash_index",
+                entry_point: Some("calc_hash_index"),
                 compilation_options: Default::default(),
+                cache: None,
             });
 
         let compute_pipeline =
@@ -220,8 +222,9 @@ impl Renderer {
                 label: Some("compute pipeline"),
                 layout: Some(&compute_pipeline_layout),
                 module: &shader,
-                entry_point: "cs_main",
+                entry_point: Some("cs_main"),
                 compilation_options: Default::default(),
+                cache: None,
             });
 
         // render pipeline
@@ -247,13 +250,13 @@ impl Renderer {
                 layout: Some(&render_pipeline_layout),
                 vertex: wgpu::VertexState {
                     module: &shader,
-                    entry_point: "vs_main",
+                    entry_point: Some("vs_main"),
                     buffers: &[instance_buffer_layout],
                     compilation_options: Default::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: "fs_main",
+                    entry_point: Some("fs_main"),
                     compilation_options: Default::default(),
                     targets: &[Some(ColorTargetState {
                         format: swapchain_format,
@@ -268,6 +271,7 @@ impl Renderer {
                 depth_stencil: None,
                 multisample: wgpu::MultisampleState::default(),
                 multiview: None,
+                cache: None,
             },
         );
 

@@ -15,6 +15,6 @@ rayon = "1.10.0"
 tokio = { version = "1.37.0", features = ["full"] }
 tracing = "0.1.40"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
-wgpu = "0.20.0"
+wgpu = "24.0.1"
 wgpu_bitonic_sort = { version = "0.1.0", path = "../wgpu_bitonic_sort" }
 winit = "0.30.0"

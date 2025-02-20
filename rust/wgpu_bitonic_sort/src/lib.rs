@@ -1,3 +1,5 @@
+use std::iter::successors;
+
 use bytemuck::cast_slice;
 use param::Param;
 use wgpu::{
@@ -69,7 +71,7 @@ impl BitonicSorter {
                 bind_group_layouts: &[&bind_group_layout],
                 push_constant_ranges: &[PushConstantRange {
                     stages: ShaderStages::COMPUTE,
-                    range: 0..(4 * 3),
+                    range: 0..(4 * 5),
                 }],
             });
 
@@ -78,9 +80,10 @@ impl BitonicSorter {
                 label: Some("bitonic sort compute pipeline"),
                 layout: Some(&pipeline_layout),
                 module: &shader,
-                entry_point: "bitonic_sort_op",
+                entry_point: Some("bitonic_sort_op"),
                 compilation_options: PipelineCompilationOptions::default(
                 ),
+                cache: None,
             });
 
         Self {
@@ -126,18 +129,15 @@ impl BitonicSorter {
         device: &Device,
         data_len: u32,
     ) -> CommandBuffer {
-        let max_size =
+        let max_dim_size =
             device.limits().max_compute_workgroups_per_dimension;
-        let max_size_f64 = max_size as f64;
-
-        let stage_num = (data_len as f64).log2().ceil() as u32;
 
         let mut encoder =
             device.create_command_encoder(&CommandEncoderDescriptor {
                 label: Some("bitonic sort command encoder"),
             });
 
-        {
+        if data_len != 0 {
             let mut pass =
                 encoder.begin_compute_pass(&ComputePassDescriptor {
                     label: Some("bitonic sort compute pass"),
@@ -147,30 +147,34 @@ impl BitonicSorter {
             pass.set_bind_group(0, &self.bind_group, &[]);
             pass.set_pipeline(&self.pipeline);
 
-            for stage in 1..=stage_num {
-                for step in 1..=stage {
-                    let op_len = 2_u32.pow(stage - step);
-                    let op_count = 2_u32.pow(stage_num - 1);
+            let len = data_len.next_power_of_two();
+            let size = ((len / 2) as f64).cbrt().ceil() as u32;
+            // incorrect, but works when not exceeding limit
+            let size = size.min(max_dim_size);
 
-                    let size = op_count as f64;
-                    let x = size;
-                    let y = x / max_size_f64;
-                    let z = y / max_size_f64;
-
-                    let x = (x.ceil() as u32).min(max_size);
-                    let y = (y.ceil() as u32).min(max_size);
-                    let z = z.ceil() as u32;
+            for stage in successors(Some(2_u32), |it| it.checked_mul(2))
+                .take_while(|&it| it <= len)
+            {
+                for step in
+                    successors(Some(stage / 2), |it| it.checked_div(2))
+                        .take_while(|&it| it > 0)
+                {
+                    let step_log2 = step.trailing_zeros();
+                    let step_mod_mask = ((step - 1) | step) >> 1;
 
                     pass.set_push_constants(
                         0,
                         cast_slice(&[Param {
-                            dimension_size: max_size,
+                            dimension_size: size,
+
+                            stage,
                             step,
-                            op_len,
+                            step_log2,
+                            step_mod_mask,
                         }]),
                     );
 
-                    pass.dispatch_workgroups(x, y, z);
+                    pass.dispatch_workgroups(size, size, size);
                 }
             }
         }
@@ -283,7 +287,6 @@ mod tests {
         let mut rng = rand::rngs::SmallRng::seed_from_u64(seed);
 
         let data = std::iter::repeat(0)
-            .into_iter()
             .take(n)
             .map(|_| rng.gen_range(0..u32::MAX))
             .collect();
