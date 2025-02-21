@@ -92,18 +92,52 @@ fn fs_main(
     return vec4<f32>(info.color.rgb, alpha * in_range);
 }
 
+const e = 2.718281828459045235360287471352f;
+
+// Å
+
+// Lennard-Jones potential
+// const max_velocity_visual = 140f;
+// const grid_size = 3.34f;
+// const point_size = 2.0f;
+// const boundary_size = 1000.0;
+// 
+// const D = 0.409f;
+// const Z = 2.59f;
+// fn force(distance: f32) -> f32 {
+//     var zd = Z / distance;
+//     return 24f * D * (2f * pow(zd, 12f) - pow(zd, 6f)) * (1f / distance);
+// }
+
+// Morse potential
+// const max_velocity_visual = 387f;
+// const grid_size = 6.79f / 3f;
+// const point_size = 1.0f;
+// const boundary_size = 500.0;
+
+// const De = 5.12f;
+// const a = 2.8f;
+// const re = 1.21f;
+
+const max_velocity_visual = 387f;
+const grid_size = 2.55f;
+const point_size = 2.0f;
+const boundary_size = 1000.0;
+
+const De = 0.409f;
+const a = 2.59f;
+const re = 2.59f;
+fn force(distance: f32) -> f32 {
+    let earr = pow(e, -a * (distance - re));
+    return 2.0 * De * a * earr * (1 - earr) * -1.0;
+}
+
 // percent
 const edge_width = 0.1;
-const max_velocity_visual = 140f;
-const boundary_size = 1000.0;
 const boundary_x = boundary_size;
 const boundary_y = boundary_size; 
 const boundary_margin = boundary_size * 0.2;
-const grid_size = 3.34f;
-const point_size = 2.0f;
-const D = 0.409f;
-const Z = 2.59f;
-const gravity = 1f;
+const gravity = 0.1f;
 // const speed = 1.0;
 
 const boundary_scaler = 1.0 / vec2<f32>(boundary_x, boundary_y);
@@ -175,17 +209,13 @@ fn calc_limit(p: Point) -> LimitInfo {
     );
 }
 
-fn force(distance: f32) -> f32 {
-    var zd = Z / distance;
-    return 24f * D * (2f * pow(zd, 12f) - pow(zd, 6f)) * (1f / distance);
-}
-
 fn update(idx: u32, time_delta: f32) -> Point {
     var p = points[idx];
     var pos = p.pos;
     // p.pos += p.velocity * 1f / 1000f;
 
     // var acc = vec2<f32>(0.0, -gravity);
+
     var acc = vec2<f32>(0.0);
 
     var gravity_centers = gravity_centers;

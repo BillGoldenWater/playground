@@ -41,6 +41,7 @@ async fn run() -> anyhow::Result<()> {
         command_queue: Arc::new(Mutex::new(VecDeque::new())),
 
         paused: false,
+        paused_pending_step: 0,
 
         viewport: None,
 

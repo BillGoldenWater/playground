@@ -27,6 +27,7 @@ pub struct App {
     pub command_queue: Arc<Mutex<VecDeque<Command>>>,
 
     pub paused: bool,
+    pub paused_pending_step: u64,
 
     pub viewport: Option<Viewport>,
 
@@ -82,55 +83,59 @@ impl ApplicationHandler for App {
             }
             WindowEvent::RedrawRequested => {
                 if let Some(viewport) = self.viewport.as_mut() {
-                    //let start = std::time::Instant::now();
-                    for _ in 0..self.tick_multiply {
-                        viewport.renderer.update(&self.ctx);
+                    let should_tick =
+                        !self.paused || self.paused_pending_step > 0;
+                    self.paused_pending_step =
+                        self.paused_pending_step.saturating_sub(1);
+
+                    if should_tick {
+                        for _ in 0..self.tick_multiply {
+                            viewport.renderer.update(&self.ctx);
+                        }
                     }
-                    //let update = start.elapsed();
                     viewport.render(&self.ctx).expect("failed to render");
-                    //let render = start.elapsed() - update;
-                    //println!(
-                    //    "update: {: >8.2?}, render: {: >8.2?}",
-                    //    update, render
-                    //);
-                    //while !self
-                    //    .ctx
-                    //    .device
-                    //    .poll(wgpu::MaintainBase::Poll)
-                    //    .is_queue_empty()
-                    //{}
+
                     self.frame_count += 1;
                     let elapsed =
                         self.last_report.elapsed().as_secs_f64();
                     if elapsed >= 1.0 {
                         let fps = self.frame_count as f64 / elapsed;
+                        let tick_multiply = should_tick
+                            .then_some(self.tick_multiply)
+                            .unwrap_or_default();
                         println!(
                             "fps: {:.2}, tps: {:.2}, tick_multiply: {}",
                             fps,
-                            fps * self.tick_multiply as f64,
-                            self.tick_multiply,
+                            fps * tick_multiply as f64,
+                            tick_multiply,
                         );
                         self.frame_count = 0;
                         self.last_report = Instant::now();
 
-                        if fps > 80.0 {
-                            self.perf_offset += 1;
-                        } else if fps < 60.0 {
-                            self.perf_offset -= 1;
-                        } else {
-                            self.perf_offset = 0;
-                        }
+                        if !self.paused {
+                            if fps > 80.0 {
+                                self.perf_offset += 1;
+                            } else if fps < 60.0 {
+                                self.perf_offset -= 1;
+                            } else {
+                                self.perf_offset = 0;
+                            }
 
-                        if self.perf_offset >= 2 {
-                            self.tick_multiply += 1;
-                        } else if self.perf_offset <= -2 {
-                            self.tick_multiply =
-                                (self.tick_multiply - 2).max(1);
+                            if self.perf_offset >= 2 {
+                                self.tick_multiply +=
+                                    (self.perf_offset - 1) as u64;
+                            } else if self.perf_offset <= -2 {
+                                self.tick_multiply = self
+                                    .tick_multiply
+                                    .wrapping_add_signed(
+                                        (self.perf_offset - 1) * 2,
+                                    )
+                                    .max(1);
+                            }
                         }
                     }
-                    if !self.paused {
-                        viewport.window.request_redraw();
-                    }
+
+                    viewport.window.request_redraw();
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
@@ -218,20 +223,15 @@ impl ApplicationHandler for App {
                             );
                         }
                         NamedKey::ArrowRight => {
-                            if let Some(viewport) = self.viewport.as_ref()
-                            {
-                                viewport.window.request_redraw();
-                                info!("requesting new frame");
+                            if self.paused {
+                                info!("adding pending step");
+                                self.paused_pending_step += 1;
                             }
                         }
                         NamedKey::Space => {
                             self.paused = !self.paused;
                             if !self.paused {
-                                if let Some(viewport) =
-                                    self.viewport.as_ref()
-                                {
-                                    viewport.window.request_redraw();
-                                }
+                                self.paused_pending_step = 0;
                             }
                             info!("paused: {}", self.paused);
                         }
