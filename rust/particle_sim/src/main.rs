@@ -32,6 +32,7 @@ async fn run() -> anyhow::Result<()> {
                 .from_env_lossy(),
         )
         .init();
+    std::env::set_var("MTL_HUD_ENABLED", "1");
 
     let mut app = App {
         ctx: WgpuContext::new()

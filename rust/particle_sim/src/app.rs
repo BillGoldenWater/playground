@@ -116,6 +116,9 @@ impl ApplicationHandler for App {
                             if fps > 80.0 {
                                 self.perf_offset += 1;
                             } else if fps < 60.0 {
+                                if self.perf_offset > 0 {
+                                    self.perf_offset = 0;
+                                }
                                 self.perf_offset -= 1;
                             } else {
                                 self.perf_offset = 0;
@@ -124,11 +127,11 @@ impl ApplicationHandler for App {
                             if self.perf_offset >= 2 {
                                 self.tick_multiply +=
                                     (self.perf_offset - 1) as u64;
-                            } else if self.perf_offset <= -2 {
+                            } else if self.perf_offset <= -1 {
                                 self.tick_multiply = self
                                     .tick_multiply
-                                    .wrapping_add_signed(
-                                        (self.perf_offset - 1) * 2,
+                                    .saturating_add_signed(
+                                        self.perf_offset,
                                     )
                                     .max(1);
                             }
