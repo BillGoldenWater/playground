@@ -1,4 +1,8 @@
-use std::{sync::Arc, time::Instant};
+use std::{
+    io::{Write, stdout},
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use node_graph_interpreter::{
     Context, FlowIndexes, Node, ParameterIndexes,
@@ -77,14 +81,14 @@ fn main() -> anyhow::Result<()> {
         // 3 set len = list len
         Node::Exec {
             parameters: [constant(0), param(11, 0)].into(),
-            next: [flow(4)].into(),
+            next: [[flow(4)].into()].into(),
             exec: var_set.clone(),
         },
         // 4 if loop 1 index < len
-        Node::FlowControl {
+        Node::Exec {
             parameters: [param(5, 0)].into(),
             next: [[flow(8)].into(), [].into()].into(),
-            branch: b.clone(),
+            exec: b.clone(),
         },
         // 5 loop 1 index < len
         Node::Operation {
@@ -104,13 +108,13 @@ fn main() -> anyhow::Result<()> {
         // 8 set loop 2 index = 0
         Node::Exec {
             parameters: [constant(11), constant(3)].into(),
-            next: [flow(14)].into(),
+            next: [[flow(14)].into()].into(),
             exec: var_set.clone(),
         },
         // 9 loop 1 index++
         Node::Exec {
             parameters: [constant(2), param(10, 0)].into(),
-            next: [flow(4)].into(),
+            next: [[flow(4)].into()].into(),
             exec: var_set.clone(),
         },
         // 10 loop 1 index + 1
@@ -141,10 +145,10 @@ fn main() -> anyhow::Result<()> {
             exec: Arc::from(ListAssemble),
         },
         // 14 if loop 2 index < len - 1
-        Node::FlowControl {
+        Node::Exec {
             parameters: [param(15, 0)].into(),
             next: [[flow(18)].into(), [flow(9)].into()].into(),
-            branch: b.clone(),
+            exec: b.clone(),
         },
         // 15 loop 2 index < len - 1
         Node::Operation {
@@ -162,15 +166,15 @@ fn main() -> anyhow::Result<()> {
             exec: sub.clone(),
         },
         // 18 if list[loop 2 index] > list[loop 2 index + 1]
-        Node::FlowControl {
+        Node::Exec {
             parameters: [param(21, 0)].into(),
             next: [[flow(25)].into(), [flow(19)].into()].into(),
-            branch: b.clone(),
+            exec: b.clone(),
         },
         // 19 loop 2 index++
         Node::Exec {
             parameters: [constant(11), param(20, 0)].into(),
-            next: [flow(14)].into(),
+            next: [[flow(14)].into()].into(),
             exec: var_set.clone(),
         },
         // 20 loop 2 index + 1
@@ -201,19 +205,19 @@ fn main() -> anyhow::Result<()> {
         // 25 swap, temp = list[loop 2 index]
         Node::Exec {
             parameters: [constant(12), param(22, 0)].into(),
-            next: [flow(26)].into(),
+            next: [[flow(26)].into()].into(),
             exec: var_set.clone(),
         },
         // 26 swap, list[loop 2 index] = list[loop 2 index + 1]
         Node::Exec {
             parameters: [param(12, 0), param(16, 0), param(23, 0)].into(),
-            next: [flow(27)].into(),
+            next: [[flow(27)].into()].into(),
             exec: list_set.clone(),
         },
         // 27 swap, list[loop 2 index + 1] = temp
         Node::Exec {
             parameters: [param(12, 0), param(20, 0), param(28, 0)].into(),
-            next: [flow(19)].into(),
+            next: [[flow(19)].into()].into(),
             exec: list_set.clone(),
         },
         // 28 temp
@@ -230,18 +234,39 @@ fn main() -> anyhow::Result<()> {
 
     let mut ctx = Context::default();
 
-    for _ in 0..5 {
+    let run_dur = 1.;
+    let run_start = Instant::now();
+
+    let mut count = 0;
+    let mut cost_sum = Duration::default();
+    let mut min = Duration::MAX;
+    let mut max = Duration::default();
+    while run_start.elapsed().as_secs_f64() < run_dur {
         let nodes = nodes.clone();
         let start = Instant::now();
+
         ctx.run_start(nodes, 2, [].into());
-        println!("{:?}", start.elapsed());
+
+        let dur = start.elapsed();
+        cost_sum += dur;
+        min = dur.min(min);
+        max = dur.max(max);
+        count += 1;
     }
+    println!("avg: {:?}, min: {min:?}, max: {max:?}", cost_sum / count);
     println!("{:?}", ctx.lists);
 
+    let run_start = Instant::now();
+
+    let mut count = 0;
+    let mut cost_sum = Duration::from_secs_f64(0.0);
     let mut arr = vec![];
-    for _ in 0..5 {
-        arr = std::hint::black_box(vec![2, 1, 4, 6, 0]);
+    let mut min = Duration::MAX;
+    let mut max = Duration::default();
+    while run_start.elapsed().as_secs_f64() < run_dur {
         let start = Instant::now();
+
+        arr = std::hint::black_box(vec![2, 1, 4, 6, 0]);
         for _ in 0..arr.len() {
             for i in 0..arr.len() - 1 {
                 if arr[i] > arr[i + 1] {
@@ -249,9 +274,15 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
-        println!("{:?}", start.elapsed());
+
+        let dur = start.elapsed();
+        cost_sum += dur;
+        min = dur.min(min);
+        max = dur.max(max);
+        count += 1;
         std::hint::black_box(&arr);
     }
+    println!("avg: {:?}, min: {min:?}, max: {max:?}", cost_sum / count);
     println!("{arr:?}");
 
     Ok(())

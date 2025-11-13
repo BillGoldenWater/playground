@@ -1,29 +1,29 @@
-use crate::{
-    BehaviorBranch, BehaviorExec, Context, ParameterIndexes, Value,
-};
+use crate::{Context, Exec, ParameterIndexes, Value};
 
 #[derive(Debug)]
 pub struct Noop;
 
-impl BehaviorExec for Noop {
+impl Exec for Noop {
     fn exec_with_param(
         &self,
         _ctx: &mut Context,
-        _params: Box<[Value]>,
-    ) -> Box<[Value]> {
-        Box::new([])
+        _params: &[Value],
+        _output: &mut Vec<Value>,
+    ) -> usize {
+        0
     }
 }
 
 #[derive(Debug)]
 pub struct LocalVariable;
 
-impl BehaviorExec for LocalVariable {
+impl Exec for LocalVariable {
     fn exec(
         &self,
         ctx: &mut Context,
         params: &[ParameterIndexes],
-    ) -> Box<[crate::value::Value]> {
+        output: &mut Vec<Value>,
+    ) -> usize {
         debug_assert!((1..=2).contains(&params.len()));
 
         let nodes = ctx.nodes.clone();
@@ -35,17 +35,20 @@ impl BehaviorExec for LocalVariable {
             let init_value = ctx.query_param(&nodes, &params[1]);
             let var = ctx.get_local_variable(var_key.as_local_variable());
             *var = init_value;
-            Box::new([var.clone()])
+            output.push(var.clone());
         } else {
-            Box::new([var.clone()])
+            output.push(var.clone());
         }
+
+        0
     }
 
     fn exec_with_param(
         &self,
         _ctx: &mut Context,
-        _params: Box<[Value]>,
-    ) -> Box<[Value]> {
+        _params: &[Value],
+        _output: &mut Vec<Value>,
+    ) -> usize {
         unreachable!()
     }
 }
@@ -53,69 +56,72 @@ impl BehaviorExec for LocalVariable {
 #[derive(Debug)]
 pub struct LocalVariableSet;
 
-impl BehaviorExec for LocalVariableSet {
-    fn exec(
+impl Exec for LocalVariableSet {
+    fn exec_with_param(
         &self,
         ctx: &mut Context,
-        params: &[ParameterIndexes],
-    ) -> Box<[crate::value::Value]> {
+        params: &[Value],
+        _output: &mut Vec<Value>,
+    ) -> usize {
         debug_assert_eq!(params.len(), 2);
 
-        let params = ctx.query_params(params);
         let var = ctx.get_local_variable(params[0].as_local_variable());
 
         *var = params[1].clone();
 
-        Box::new([])
-    }
-
-    fn exec_with_param(
-        &self,
-        _ctx: &mut Context,
-        _params: Box<[Value]>,
-    ) -> Box<[Value]> {
-        unreachable!()
+        0
     }
 }
 
 #[derive(Debug)]
 pub struct ListAssemble;
 
-impl BehaviorExec for ListAssemble {
+impl Exec for ListAssemble {
     fn exec_with_param(
         &self,
         ctx: &mut Context,
-        params: Box<[Value]>,
-    ) -> Box<[Value]> {
-        Box::new([ctx.list_assemble(params.into_vec())])
+        params: &[Value],
+        output: &mut Vec<Value>,
+    ) -> usize {
+        output.push(ctx.list_assemble(params.to_vec()));
+
+        0
     }
 }
 
 #[derive(Debug)]
 pub struct ListGet;
 
-impl BehaviorExec for ListGet {
+impl Exec for ListGet {
     fn exec_with_param(
         &self,
         ctx: &mut Context,
-        params: Box<[Value]>,
-    ) -> Box<[Value]> {
+        params: &[Value],
+        output: &mut Vec<Value>,
+    ) -> usize {
         debug_assert_eq!(params.len(), 2);
 
-        Box::new([ctx
-            .list_get(params[0].as_list(), params[1].as_int() as usize)])
+        output.push(
+            ctx.list_get(
+                params[0].as_list(),
+                params[1].as_int() as usize,
+            ),
+        );
+
+        0
     }
 }
 
 #[derive(Debug)]
 pub struct ListSet;
 
-impl BehaviorExec for ListSet {
+impl Exec for ListSet {
     fn exec_with_param(
         &self,
         ctx: &mut Context,
-        params: Box<[Value]>,
-    ) -> Box<[Value]> {
+        params: &[Value],
+        _output: &mut Vec<Value>,
+    ) -> usize {
         debug_assert_eq!(params.len(), 3);
 
         ctx.list_set(
@@ -124,110 +130,127 @@ impl BehaviorExec for ListSet {
             params[2].clone(),
         );
 
-        Box::new([])
+        0
     }
 }
 
 #[derive(Debug)]
 pub struct ListLength;
 
-impl BehaviorExec for ListLength {
+impl Exec for ListLength {
     fn exec_with_param(
         &self,
         ctx: &mut Context,
-        params: Box<[Value]>,
-    ) -> Box<[Value]> {
+        params: &[Value],
+        output: &mut Vec<Value>,
+    ) -> usize {
         debug_assert_eq!(params.len(), 1);
 
-        Box::new([Value::Int(ctx.list_len(params[0].as_list()) as i64)])
+        output.push(Value::Int(ctx.list_len(params[0].as_list()) as i64));
+
+        0
     }
 }
 
 #[derive(Debug)]
 pub struct Addition;
 
-impl BehaviorExec for Addition {
+impl Exec for Addition {
     fn exec_with_param(
         &self,
         _ctx: &mut Context,
-        params: Box<[Value]>,
-    ) -> Box<[Value]> {
+        params: &[Value],
+        output: &mut Vec<Value>,
+    ) -> usize {
         debug_assert_eq!(params.len(), 2);
 
-        Box::new([Value::Int(params[0].as_int() + params[1].as_int())])
+        output.push(Value::Int(params[0].as_int() + params[1].as_int()));
+
+        0
     }
 }
 
 #[derive(Debug)]
 pub struct Subtraction;
 
-impl BehaviorExec for Subtraction {
+impl Exec for Subtraction {
     fn exec_with_param(
         &self,
         _ctx: &mut Context,
-        params: Box<[Value]>,
-    ) -> Box<[Value]> {
+        params: &[Value],
+        output: &mut Vec<Value>,
+    ) -> usize {
         debug_assert_eq!(params.len(), 2);
 
-        Box::new([Value::Int(params[0].as_int() - params[1].as_int())])
+        output.push(Value::Int(params[0].as_int() - params[1].as_int()));
+
+        0
     }
 }
 
 #[derive(Debug)]
 pub struct IsGreaterThan;
 
-impl BehaviorExec for IsGreaterThan {
+impl Exec for IsGreaterThan {
     fn exec_with_param(
         &self,
         _ctx: &mut Context,
-        params: Box<[Value]>,
-    ) -> Box<[Value]> {
+        params: &[Value],
+        output: &mut Vec<Value>,
+    ) -> usize {
         debug_assert_eq!(params.len(), 2);
 
-        Box::new([Value::Bool(params[0].as_int() > params[1].as_int())])
+        output.push(Value::Bool(params[0].as_int() > params[1].as_int()));
+
+        0
     }
 }
 
 #[derive(Debug)]
 pub struct IsLessThan;
 
-impl BehaviorExec for IsLessThan {
+impl Exec for IsLessThan {
     fn exec_with_param(
         &self,
         _ctx: &mut Context,
-        params: Box<[Value]>,
-    ) -> Box<[Value]> {
+        params: &[Value],
+        output: &mut Vec<Value>,
+    ) -> usize {
         debug_assert_eq!(params.len(), 2);
 
-        Box::new([Value::Bool(params[0].as_int() < params[1].as_int())])
+        output.push(Value::Bool(params[0].as_int() < params[1].as_int()));
+
+        0
     }
 }
 
 #[derive(Debug)]
 pub struct Print;
 
-impl BehaviorExec for Print {
+impl Exec for Print {
     fn exec_with_param(
         &self,
         _ctx: &mut Context,
-        params: Box<[Value]>,
-    ) -> Box<[Value]> {
+        params: &[Value],
+        _output: &mut Vec<Value>,
+    ) -> usize {
         debug_assert_eq!(params.len(), 1);
 
         println!("{}", params[0].as_str());
 
-        Box::new([])
+        0
     }
 }
 
 #[derive(Debug)]
 pub struct DoubleBranch;
 
-impl BehaviorBranch for DoubleBranch {
-    fn branch_with_param(
+impl Exec for DoubleBranch {
+    fn exec_with_param(
         &self,
         _ctx: &mut Context,
-        params: Box<[Value]>,
+        params: &[Value],
+        _output: &mut Vec<Value>,
     ) -> usize {
         debug_assert_eq!(params.len(), 1);
 

@@ -16,37 +16,27 @@ pub struct FlowIndexes {
     pub node: usize,
 }
 
-pub trait BehaviorExec: Debug {
+pub trait Exec: Debug {
+    /// # Returns
+    /// next branch index, ignored in non exec node
     fn exec(
         &self,
         ctx: &mut Context,
         params: &[ParameterIndexes],
-    ) -> Box<[Value]> {
-        let params = ctx.query_params(params);
-        self.exec_with_param(ctx, params)
+        output: &mut Vec<Value>,
+    ) -> usize {
+        let mut params_out = ctx.value_cache_get();
+        ctx.query_params(params, &mut params_out);
+        let ret = self.exec_with_param(ctx, &params_out, output);
+        ctx.value_cache_ret(params_out);
+        ret
     }
 
     fn exec_with_param(
         &self,
         ctx: &mut Context,
-        params: Box<[Value]>,
-    ) -> Box<[Value]>;
-}
-
-pub trait BehaviorBranch: Debug {
-    fn branch(
-        &self,
-        ctx: &mut Context,
-        params: &[ParameterIndexes],
-    ) -> usize {
-        let params = ctx.query_params(params);
-        self.branch_with_param(ctx, params)
-    }
-
-    fn branch_with_param(
-        &self,
-        ctx: &mut Context,
-        params: Box<[Value]>,
+        params: &[Value],
+        output: &mut Vec<Value>,
     ) -> usize;
 }
 
@@ -63,29 +53,24 @@ pub enum Node {
     },
     Exec {
         parameters: Box<[ParameterIndexes]>,
-        next: Box<[FlowIndexes]>,
-
-        exec: Arc<dyn BehaviorExec>,
-    },
-    FlowControl {
-        parameters: Box<[ParameterIndexes]>,
         next: Box<[Box<[FlowIndexes]>]>,
 
-        branch: Arc<dyn BehaviorBranch>,
+        exec: Arc<dyn Exec>,
     },
     Operation {
         parameters: Box<[ParameterIndexes]>,
 
-        exec: Arc<dyn BehaviorExec>,
+        exec: Arc<dyn Exec>,
     },
 }
 
 #[derive(Debug, Default)]
 pub struct Context {
     pub nodes: Arc<[Node]>,
-    pub values: Box<[Option<Box<[Value]>>]>,
+    pub values: Box<[Option<Vec<Value>>]>,
     pub local_variables: HashMap<usize, Value>,
     pub lists: Vec<Vec<Value>>,
+    pub outputs: Vec<Vec<Value>>,
     // TODO: , and clear
     // loop_flags: HashMap<usize, bool>,
 }
@@ -95,13 +80,14 @@ impl Context {
         &mut self,
         nodes: Arc<[Node]>,
         idx: usize,
-        values: Box<[Value]>,
+        values: Vec<Value>,
     ) {
         self.nodes = nodes.clone();
         // TODO: in-place clear
         self.values = vec![None; nodes.len()].into_boxed_slice();
         self.local_variables = Default::default();
         self.lists = Vec::with_capacity(8);
+        self.outputs = Vec::with_capacity(8);
 
         let Node::Start { next } = &nodes[idx] else {
             panic!("expect start node");
@@ -128,23 +114,18 @@ impl Context {
                 } => {
                     let param = parameters.clone();
                     let exec = exec.clone();
+                    let mut output = self.value_cache_get();
 
-                    let res = exec.exec(self, &param);
+                    let branch_idx = exec.exec(self, &param, &mut output);
 
-                    self.values[idx] = Some(res);
-                    exec_queue
-                        .extend(next.iter().rev().map(|it| it.node));
-                }
-                Node::FlowControl {
-                    parameters,
-                    branch,
-                    next,
-                } => {
-                    let param = parameters.clone();
-                    let branch = branch.clone();
-
-                    let branch_idx = branch.branch(self, &param);
-
+                    // TODO: in-place update if possible
+                    if let Some(values) = &mut self.values[idx] {
+                        values.clear();
+                        values.extend_from_slice(&output);
+                        self.value_cache_ret(output);
+                    } else {
+                        self.values[idx] = Some(output)
+                    }
                     exec_queue.extend(
                         next[branch_idx].iter().rev().map(|it| it.node),
                     );
@@ -168,23 +149,28 @@ impl Context {
         // TODO: in-place clear
         self.values = vec![None; nodes.len()].into_boxed_slice();
         self.local_variables = Default::default();
+        self.outputs = Vec::with_capacity(8);
 
         let Node::End { parameters } = &nodes[idx] else {
             panic!("expect end node");
         };
 
-        self.query_params(parameters)
+        let mut output = self.value_cache_get();
+        self.query_params(parameters, &mut output);
+        output.into_boxed_slice()
     }
 
     pub fn query_params(
         &mut self,
         params: &[ParameterIndexes],
-    ) -> Box<[Value]> {
+        params_out: &mut Vec<Value>,
+    ) {
         let nodes = self.nodes.clone();
-        params
-            .iter()
-            .map(|param_idx| self.query_param(&nodes, param_idx))
-            .collect()
+        params_out.extend(
+            params
+                .iter()
+                .map(|param_idx| self.query_param(&nodes, param_idx)),
+        );
     }
 
     pub fn query_param(
@@ -200,12 +186,28 @@ impl Context {
                 .map(|it| it[param_idx.value].clone())
                 .unwrap_or_default(),
             Node::Operation { parameters, exec } => {
-                exec.exec(self, parameters)[param_idx.value].clone()
+                let mut output = self.value_cache_get();
+
+                exec.exec(self, parameters, &mut output);
+                let ret = output[param_idx.value].clone();
+
+                self.value_cache_ret(output);
+
+                ret
             }
-            Node::End { .. } | Node::FlowControl { .. } => {
+            Node::End { .. } => {
                 panic!("expect node that may output value")
             }
         }
+    }
+
+    pub fn value_cache_get(&mut self) -> Vec<Value> {
+        self.outputs.pop().unwrap_or_else(|| Vec::with_capacity(8))
+    }
+
+    pub fn value_cache_ret(&mut self, mut value: Vec<Value>) {
+        value.clear();
+        self.outputs.push(value);
     }
 
     pub fn get_local_variable(&mut self, key: usize) -> &mut Value {
