@@ -251,8 +251,11 @@ fn main() -> anyhow::Result<()> {
         max = dur.max(max);
         count += 1;
     }
-    println!("avg: {:?}, min: {min:?}, max: {max:?}", cost_sum / count);
-    println!("{:?}", ctx.lists);
+    println!(
+        "avg: {:?}, min: {min:?}, max: {max:?} - node graph bubble sort",
+        cost_sum / count
+    );
+    println!("{:?}", ctx.local_variables[2]);
 
     let mut count = 0;
     let mut cost_sum = Duration::from_secs_f64(0.0);
@@ -278,7 +281,34 @@ fn main() -> anyhow::Result<()> {
         count += 1;
         std::hint::black_box(&arr);
     }
-    println!("avg: {:?}, min: {min:?}, max: {max:?}", cost_sum / count);
+    println!(
+        "avg: {:?}, min: {min:?}, max: {max:?} - bubble sort",
+        cost_sum / count
+    );
+    println!("{arr:?}");
+
+    let mut count = 0;
+    let mut cost_sum = Duration::from_secs_f64(0.0);
+    let mut arr = vec![];
+    let mut min = Duration::MAX;
+    let mut max = Duration::default();
+    while cost_sum.as_secs_f64() < run_dur {
+        let start = Instant::now();
+
+        arr = std::hint::black_box(vec![2, 1, 4, 6, 0]);
+        arr.sort();
+
+        let dur = start.elapsed();
+        cost_sum += dur;
+        min = dur.min(min);
+        max = dur.max(max);
+        count += 1;
+        std::hint::black_box(&arr);
+    }
+    println!(
+        "avg: {:?}, min: {min:?}, max: {max:?} - std lib sort",
+        cost_sum / count
+    );
     println!("{arr:?}");
 
     Ok(())

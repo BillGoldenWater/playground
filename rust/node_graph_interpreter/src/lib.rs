@@ -22,19 +22,6 @@ pub trait Exec: Debug {
     fn exec(
         &self,
         ctx: &mut Context,
-        params: &[ParameterIndexes],
-        output: &mut Vec<Value>,
-    ) -> usize {
-        let mut params_out = ctx.value_cache_get();
-        ctx.query_params(params, &mut params_out);
-        let ret = self.exec_with_param(ctx, &params_out, output);
-        ctx.value_cache_ret(params_out);
-        ret
-    }
-
-    fn exec_with_param(
-        &self,
-        ctx: &mut Context,
         params: &[Value],
         output: &mut Vec<Value>,
     ) -> usize;
@@ -69,7 +56,6 @@ pub struct Context {
     pub nodes: Arc<[Node]>,
     pub values: Box<[Option<Vec<Value>>]>,
     pub local_variables: Vec<Value>,
-    pub lists: Vec<Vec<Value>>,
     pub outputs: Vec<Vec<Value>>,
     // TODO: , and clear
     // loop_flags: HashMap<usize, bool>,
@@ -86,7 +72,6 @@ impl Context {
         // TODO: in-place clear
         self.values = vec![None; nodes.len()].into_boxed_slice();
         self.local_variables = Vec::with_capacity(8);
-        self.lists = Vec::with_capacity(8);
         self.outputs = Vec::with_capacity(8);
 
         let Node::Start { next } = &nodes[idx] else {
@@ -112,11 +97,14 @@ impl Context {
                     exec,
                     next,
                 } => {
-                    let param = parameters.clone();
+                    let params = parameters.clone();
                     let exec = exec.clone();
                     let mut output = self.value_cache_get();
 
-                    let branch_idx = exec.exec(self, &param, &mut output);
+                    let mut params_out = self.value_cache_get();
+                    self.query_params(&params, &mut params_out);
+                    let branch_idx =
+                        exec.exec(self, &params_out, &mut output);
 
                     // TODO: in-place update if possible
                     if let Some(values) = &mut self.values[idx] {
@@ -188,7 +176,10 @@ impl Context {
             Node::Operation { parameters, exec } => {
                 let mut output = self.value_cache_get();
 
-                exec.exec(self, parameters, &mut output);
+                let mut params_out = self.value_cache_get();
+                self.query_params(parameters, &mut params_out);
+
+                exec.exec(self, &params_out, &mut output);
                 let ret = output[param_idx.value].clone();
 
                 self.value_cache_ret(output);
@@ -218,22 +209,22 @@ impl Context {
         &mut self.local_variables[key]
     }
 
-    pub fn list_assemble(&mut self, values: Vec<Value>) -> Value {
-        self.lists.push(values);
-        Value::List(self.lists.len() - 1)
-    }
-
-    pub fn list_get(&mut self, list: usize, idx: usize) -> Value {
-        self.lists[list][idx].clone()
-    }
-
-    pub fn list_set(&mut self, list: usize, idx: usize, value: Value) {
-        self.lists[list][idx] = value;
-    }
-
-    pub fn list_len(&mut self, list: usize) -> usize {
-        self.lists[list].len()
-    }
+    // pub fn list_assemble(&mut self, values: Vec<Value>) -> Value {
+    //     self.lists.push(values);
+    //     Value::List(self.lists.len() - 1)
+    // }
+    //
+    // pub fn list_get(&mut self, list: usize, idx: usize) -> Value {
+    //     self.lists[list][idx].clone()
+    // }
+    //
+    // pub fn list_set(&mut self, list: usize, idx: usize, value: Value) {
+    //     self.lists[list][idx] = value;
+    // }
+    //
+    // pub fn list_len(&mut self, list: usize) -> usize {
+    //     self.lists[list].len()
+    // }
 
     // pub fn loop_begin(&mut self, loop_id: usize) {
     //     self.loop_flags

@@ -1,10 +1,12 @@
-use crate::{Context, Exec, ParameterIndexes, Value};
+use std::{cell::RefCell, sync::Arc};
+
+use crate::{Context, Exec, Value};
 
 #[derive(Debug)]
 pub struct Noop;
 
 impl Exec for Noop {
-    fn exec_with_param(
+    fn exec(
         &self,
         _ctx: &mut Context,
         _params: &[Value],
@@ -21,20 +23,16 @@ impl Exec for LocalVariable {
     fn exec(
         &self,
         ctx: &mut Context,
-        params: &[ParameterIndexes],
+        params: &[Value],
         output: &mut Vec<Value>,
     ) -> usize {
         debug_assert!((1..=2).contains(&params.len()));
 
-        let nodes = ctx.nodes.clone();
-
-        let var_key = ctx.query_param(&nodes, &params[0]);
+        let var_key = &params[0];
         let var = ctx.get_local_variable(var_key.as_local_variable());
 
         if var.is_uninit() {
-            let init_value = ctx.query_param(&nodes, &params[1]);
-            let var = ctx.get_local_variable(var_key.as_local_variable());
-            *var = init_value;
+            *var = params[1].clone();
             output.push(var.clone());
         } else {
             output.push(var.clone());
@@ -42,22 +40,13 @@ impl Exec for LocalVariable {
 
         0
     }
-
-    fn exec_with_param(
-        &self,
-        _ctx: &mut Context,
-        _params: &[Value],
-        _output: &mut Vec<Value>,
-    ) -> usize {
-        unreachable!()
-    }
 }
 
 #[derive(Debug)]
 pub struct LocalVariableSet;
 
 impl Exec for LocalVariableSet {
-    fn exec_with_param(
+    fn exec(
         &self,
         ctx: &mut Context,
         params: &[Value],
@@ -77,13 +66,13 @@ impl Exec for LocalVariableSet {
 pub struct ListAssemble;
 
 impl Exec for ListAssemble {
-    fn exec_with_param(
+    fn exec(
         &self,
-        ctx: &mut Context,
+        _ctx: &mut Context,
         params: &[Value],
         output: &mut Vec<Value>,
     ) -> usize {
-        output.push(ctx.list_assemble(params.to_vec()));
+        output.push(Value::List(Arc::new(RefCell::new(params.to_vec()))));
 
         0
     }
@@ -93,19 +82,17 @@ impl Exec for ListAssemble {
 pub struct ListGet;
 
 impl Exec for ListGet {
-    fn exec_with_param(
+    fn exec(
         &self,
-        ctx: &mut Context,
+        _ctx: &mut Context,
         params: &[Value],
         output: &mut Vec<Value>,
     ) -> usize {
         debug_assert_eq!(params.len(), 2);
 
         output.push(
-            ctx.list_get(
-                params[0].as_list(),
-                params[1].as_int() as usize,
-            ),
+            params[0].as_list().borrow()[params[1].as_int() as usize]
+                .clone(),
         );
 
         0
@@ -116,19 +103,16 @@ impl Exec for ListGet {
 pub struct ListSet;
 
 impl Exec for ListSet {
-    fn exec_with_param(
+    fn exec(
         &self,
-        ctx: &mut Context,
+        _ctx: &mut Context,
         params: &[Value],
         _output: &mut Vec<Value>,
     ) -> usize {
         debug_assert_eq!(params.len(), 3);
 
-        ctx.list_set(
-            params[0].as_list(),
-            params[1].as_int() as usize,
-            params[2].clone(),
-        );
+        params[0].as_list().borrow_mut()[params[1].as_int() as usize] =
+            params[2].clone();
 
         0
     }
@@ -138,15 +122,16 @@ impl Exec for ListSet {
 pub struct ListLength;
 
 impl Exec for ListLength {
-    fn exec_with_param(
+    fn exec(
         &self,
-        ctx: &mut Context,
+        _ctx: &mut Context,
         params: &[Value],
         output: &mut Vec<Value>,
     ) -> usize {
         debug_assert_eq!(params.len(), 1);
 
-        output.push(Value::Int(ctx.list_len(params[0].as_list()) as i64));
+        output
+            .push(Value::Int(params[0].as_list().borrow().len() as i64));
 
         0
     }
@@ -156,7 +141,7 @@ impl Exec for ListLength {
 pub struct Addition;
 
 impl Exec for Addition {
-    fn exec_with_param(
+    fn exec(
         &self,
         _ctx: &mut Context,
         params: &[Value],
@@ -174,7 +159,7 @@ impl Exec for Addition {
 pub struct Subtraction;
 
 impl Exec for Subtraction {
-    fn exec_with_param(
+    fn exec(
         &self,
         _ctx: &mut Context,
         params: &[Value],
@@ -192,7 +177,7 @@ impl Exec for Subtraction {
 pub struct IsGreaterThan;
 
 impl Exec for IsGreaterThan {
-    fn exec_with_param(
+    fn exec(
         &self,
         _ctx: &mut Context,
         params: &[Value],
@@ -210,7 +195,7 @@ impl Exec for IsGreaterThan {
 pub struct IsLessThan;
 
 impl Exec for IsLessThan {
-    fn exec_with_param(
+    fn exec(
         &self,
         _ctx: &mut Context,
         params: &[Value],
@@ -228,7 +213,7 @@ impl Exec for IsLessThan {
 pub struct Print;
 
 impl Exec for Print {
-    fn exec_with_param(
+    fn exec(
         &self,
         _ctx: &mut Context,
         params: &[Value],
@@ -246,7 +231,7 @@ impl Exec for Print {
 pub struct DoubleBranch;
 
 impl Exec for DoubleBranch {
-    fn exec_with_param(
+    fn exec(
         &self,
         _ctx: &mut Context,
         params: &[Value],

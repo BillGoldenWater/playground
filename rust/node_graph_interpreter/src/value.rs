@@ -1,6 +1,6 @@
-use std::sync::Arc;
+use std::{cell::RefCell, sync::Arc};
 
-#[derive(Debug, Clone, Default, PartialEq, PartialOrd, Hash)]
+#[derive(Debug, Clone, Default)]
 pub enum Value {
     #[default]
     Uninit,
@@ -10,7 +10,7 @@ pub enum Value {
     Int(i64),
 
     String(Arc<str>),
-    List(usize),
+    List(Arc<RefCell<Vec<Value>>>),
 
     LoopId(usize),
     LocalVariable(usize),
@@ -41,12 +41,12 @@ impl Value {
         v
     }
 
-    pub fn as_list(&self) -> usize {
+    pub fn as_list(&self) -> &RefCell<Vec<Value>> {
         let Self::List(v) = self else {
             panic!("expect list, actual: {self:?}");
         };
 
-        *v
+        v
     }
 
     pub fn as_local_variable(&self) -> usize {
