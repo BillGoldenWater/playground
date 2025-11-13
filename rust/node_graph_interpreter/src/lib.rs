@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Debug, hash::Hash, sync::Arc};
+use std::{fmt::Debug, hash::Hash, sync::Arc};
 
 use crate::value::Value;
 
@@ -68,7 +68,7 @@ pub enum Node {
 pub struct Context {
     pub nodes: Arc<[Node]>,
     pub values: Box<[Option<Vec<Value>>]>,
-    pub local_variables: HashMap<usize, Value>,
+    pub local_variables: Vec<Value>,
     pub lists: Vec<Vec<Value>>,
     pub outputs: Vec<Vec<Value>>,
     // TODO: , and clear
@@ -85,7 +85,7 @@ impl Context {
         self.nodes = nodes.clone();
         // TODO: in-place clear
         self.values = vec![None; nodes.len()].into_boxed_slice();
-        self.local_variables = Default::default();
+        self.local_variables = Vec::with_capacity(8);
         self.lists = Vec::with_capacity(8);
         self.outputs = Vec::with_capacity(8);
 
@@ -211,7 +211,11 @@ impl Context {
     }
 
     pub fn get_local_variable(&mut self, key: usize) -> &mut Value {
-        self.local_variables.entry(key).or_insert(Value::Uninit)
+        if key >= self.local_variables.len() {
+            self.local_variables.resize(key + 1, Value::Uninit);
+        }
+
+        &mut self.local_variables[key]
     }
 
     pub fn list_assemble(&mut self, values: Vec<Value>) -> Value {
