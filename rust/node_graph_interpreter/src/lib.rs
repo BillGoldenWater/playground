@@ -143,12 +143,10 @@ impl Context {
                     exec,
                     next,
                 } => {
-                    let params = parameters.clone();
-                    let exec = exec.clone();
                     let mut output = self.value_cache_get();
 
                     let mut params_out = self.value_cache_get();
-                    self.query_params(&params, &mut params_out);
+                    self.query_params(parameters, &mut params_out);
                     COUNT.fetch_add(1, atomic::Ordering::SeqCst);
                     let branch_idx =
                         exec.exec(self, &params_out, &mut output);
