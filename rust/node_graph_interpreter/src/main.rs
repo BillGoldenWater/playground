@@ -1,4 +1,5 @@
 use std::{
+    env::args,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -256,6 +257,10 @@ fn main() -> anyhow::Result<()> {
         cost_sum / count
     );
     println!("{:?}", ctx.local_variables[2]);
+
+    if args().nth(1).is_none() {
+        return Ok(());
+    }
 
     let mut count = 0;
     let mut cost_sum = Duration::from_secs_f64(0.0);
