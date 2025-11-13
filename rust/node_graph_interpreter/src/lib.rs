@@ -27,13 +27,18 @@ pub struct FlowIndexes {
 }
 
 pub trait Exec: Debug {
+    /// `param_base` points to the first parameter in stack,
+    /// equal to stack.len() if empty parameter
+    ///
+    /// implementation need to consume all the parameter,
+    /// then push output
     /// # Returns
     /// next branch index, ignored in non exec node
     fn exec(
         &self,
         ctx: &mut Context,
-        params: &[Value],
-        output: &mut Vec<Value>,
+        stack: &mut Vec<Value>,
+        param_base: usize,
     ) -> usize;
 
     fn manual_param(&self) -> bool {
@@ -47,9 +52,9 @@ pub trait Exec: Debug {
         &self,
         ctx: &mut Context,
         params: &[ParameterIndexes],
-        output: &mut Vec<Value>,
+        stack: &mut Vec<Value>,
     ) -> usize {
-        let (..) = (ctx, params, output);
+        let (..) = (ctx, params, stack);
         unreachable!();
     }
 }
@@ -143,21 +148,18 @@ impl Context {
                     exec,
                     next,
                 } => {
-                    let mut output = self.value_cache_get();
+                    let mut stack = self.value_cache_get();
 
-                    let mut params_out = self.value_cache_get();
-                    self.query_params(parameters, &mut params_out);
+                    self.query_params(parameters, &mut stack);
                     COUNT.fetch_add(1, atomic::Ordering::SeqCst);
-                    let branch_idx =
-                        exec.exec(self, &params_out, &mut output);
-                    self.value_cache_ret(params_out);
+                    let branch_idx = exec.exec(self, &mut stack, 0);
 
                     if let Some(values) = &mut self.values[idx] {
                         values.clear();
-                        values.extend_from_slice(&output);
-                        self.value_cache_ret(output);
+                        values.extend_from_slice(&stack);
+                        self.value_cache_ret(stack);
                     } else {
-                        self.values[idx] = Some(output)
+                        self.values[idx] = Some(stack)
                     }
                     exec_queue.extend(
                         next[branch_idx].iter().rev().map(|it| it.node),
@@ -209,35 +211,29 @@ impl Context {
                     panic!("expect Node::Operation");
                 };
 
-                let mut output = self.value_cache_get();
+                let param_base = params_out.len() - parameters.len();
 
                 COUNT.fetch_add(1, atomic::Ordering::SeqCst);
-                exec.exec(
-                    self,
-                    &params_out[params_out.len() - parameters.len()..],
-                    &mut output,
-                );
-
-                params_out.truncate(params_out.len() - parameters.len());
-                params_out.push(output[idx.value].clone());
-
-                self.value_cache_ret(output);
+                exec.exec(self, params_out, param_base);
+                params_out.swap(param_base, param_base + idx.value);
+                params_out.truncate(param_base + 1);
 
                 pending.pop();
             } else {
                 match &nodes[idx.node] {
                     Node::Operation { parameters, exec } => {
                         if exec.manual_param() {
-                            let mut output = self.value_cache_get();
+                            let output_base = params_out.len();
 
                             exec.exec_manual_param(
-                                self,
-                                parameters,
-                                &mut output,
+                                self, parameters, params_out,
                             );
-                            params_out.push(output[idx.value].clone());
 
-                            self.value_cache_ret(output);
+                            params_out.swap(
+                                output_base,
+                                output_base + idx.value,
+                            );
+                            params_out.truncate(output_base + 1);
 
                             pending.pop();
                         } else {

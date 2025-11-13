@@ -9,8 +9,8 @@ impl Exec for Noop {
     fn exec(
         &self,
         _ctx: &mut Context,
-        _params: &[Value],
-        _output: &mut Vec<Value>,
+        _stack: &mut Vec<Value>,
+        _param_base: usize,
     ) -> usize {
         0
     }
@@ -23,8 +23,8 @@ impl Exec for LocalVariable {
     fn exec(
         &self,
         _ctx: &mut Context,
-        _params: &[Value],
-        _output: &mut Vec<Value>,
+        _stack: &mut Vec<Value>,
+        _param_base: usize,
     ) -> usize {
         unreachable!()
     }
@@ -37,27 +37,26 @@ impl Exec for LocalVariable {
         &self,
         ctx: &mut Context,
         params: &[ParameterIndexes],
-        output: &mut Vec<Value>,
+        stack: &mut Vec<Value>,
     ) -> usize {
         debug_assert!((1..=2).contains(&params.len()));
 
-        let mut params_out = ctx.value_cache_get();
-        ctx.query_params(&params[..1], &mut params_out);
+        let param_base = stack.len();
+        ctx.query_params(&params[..1], stack);
 
-        let var_key = &params_out[0];
+        let var_key = &stack[param_base];
         let var = ctx.get_local_variable(var_key.as_local_variable());
 
         if var.is_uninit() {
-            ctx.query_params(&params[1..], &mut params_out);
-            let var_key = &params_out[0];
+            ctx.query_params(&params[1..2], stack);
+            let var_key = &stack[param_base];
             let var = ctx.get_local_variable(var_key.as_local_variable());
-            *var = params_out[1].clone();
-            output.push(var.clone());
+            *var = stack[param_base + 1].clone();
+            stack[param_base] = var.clone();
+            stack.pop();
         } else {
-            output.push(var.clone());
+            stack[param_base] = var.clone()
         }
-
-        ctx.value_cache_ret(params_out);
 
         0
     }
@@ -70,14 +69,17 @@ impl Exec for LocalVariableSet {
     fn exec(
         &self,
         ctx: &mut Context,
-        params: &[Value],
-        _output: &mut Vec<Value>,
+        stack: &mut Vec<Value>,
+        param_base: usize,
     ) -> usize {
-        debug_assert_eq!(params.len(), 2);
+        debug_assert_eq!(stack.len() - param_base, 2);
 
-        let var = ctx.get_local_variable(params[0].as_local_variable());
+        let value = stack.pop().expect("expect 2 parameters");
+        let var = stack.pop().expect("expect 2 parameters");
 
-        *var = params[1].clone();
+        let var = ctx.get_local_variable(var.as_local_variable());
+
+        *var = value;
 
         0
     }
@@ -90,10 +92,12 @@ impl Exec for ListAssemble {
     fn exec(
         &self,
         _ctx: &mut Context,
-        params: &[Value],
-        output: &mut Vec<Value>,
+        stack: &mut Vec<Value>,
+        param_base: usize,
     ) -> usize {
-        output.push(Value::List(Rc::new(RefCell::new(params.to_vec()))));
+        let list = stack[param_base..].to_vec();
+        stack.truncate(param_base);
+        stack.push(Value::List(Rc::new(RefCell::new(list))));
 
         0
     }
@@ -106,15 +110,18 @@ impl Exec for ListGet {
     fn exec(
         &self,
         _ctx: &mut Context,
-        params: &[Value],
-        output: &mut Vec<Value>,
+        stack: &mut Vec<Value>,
+        param_base: usize,
     ) -> usize {
-        debug_assert_eq!(params.len(), 2);
+        debug_assert_eq!(stack.len() - param_base, 2);
 
-        output.push(
-            params[0].as_list().borrow()[params[1].as_int() as usize]
-                .clone(),
-        );
+        let idx = stack.pop().expect("expect 2 parameters");
+        let list = stack.pop().expect("expect 2 parameters");
+
+        let value =
+            list.as_list().borrow()[idx.as_int() as usize].clone();
+
+        stack.push(value);
 
         0
     }
@@ -127,13 +134,16 @@ impl Exec for ListSet {
     fn exec(
         &self,
         _ctx: &mut Context,
-        params: &[Value],
-        _output: &mut Vec<Value>,
+        stack: &mut Vec<Value>,
+        param_base: usize,
     ) -> usize {
-        debug_assert_eq!(params.len(), 3);
+        debug_assert_eq!(stack.len() - param_base, 3);
 
-        params[0].as_list().borrow_mut()[params[1].as_int() as usize] =
-            params[2].clone();
+        let value = stack.pop().expect("expect 3 parameters");
+        let idx = stack.pop().expect("expect 3 parameters");
+        let list = stack.pop().expect("expect 3 parameters");
+
+        list.as_list().borrow_mut()[idx.as_int() as usize] = value;
 
         0
     }
@@ -146,13 +156,13 @@ impl Exec for ListLength {
     fn exec(
         &self,
         _ctx: &mut Context,
-        params: &[Value],
-        output: &mut Vec<Value>,
+        stack: &mut Vec<Value>,
+        param_base: usize,
     ) -> usize {
-        debug_assert_eq!(params.len(), 1);
+        debug_assert_eq!(stack.len() - param_base, 1);
 
-        output
-            .push(Value::Int(params[0].as_list().borrow().len() as i64));
+        let list = stack.pop().expect("expect 1 parameter");
+        stack.push(Value::Int(list.as_list().borrow().len() as i64));
 
         0
     }
@@ -165,12 +175,14 @@ impl Exec for Addition {
     fn exec(
         &self,
         _ctx: &mut Context,
-        params: &[Value],
-        output: &mut Vec<Value>,
+        stack: &mut Vec<Value>,
+        param_base: usize,
     ) -> usize {
-        debug_assert_eq!(params.len(), 2);
+        debug_assert_eq!(stack.len() - param_base, 2);
 
-        output.push(Value::Int(params[0].as_int() + params[1].as_int()));
+        let b = stack.pop().expect("expect 2 parameters");
+        let a = stack.pop().expect("expect 2 parameters");
+        stack.push(Value::Int(a.as_int() + b.as_int()));
 
         0
     }
@@ -183,12 +195,14 @@ impl Exec for Subtraction {
     fn exec(
         &self,
         _ctx: &mut Context,
-        params: &[Value],
-        output: &mut Vec<Value>,
+        stack: &mut Vec<Value>,
+        param_base: usize,
     ) -> usize {
-        debug_assert_eq!(params.len(), 2);
+        debug_assert_eq!(stack.len() - param_base, 2);
 
-        output.push(Value::Int(params[0].as_int() - params[1].as_int()));
+        let b = stack.pop().expect("expect 2 parameters");
+        let a = stack.pop().expect("expect 2 parameters");
+        stack.push(Value::Int(a.as_int() - b.as_int()));
 
         0
     }
@@ -201,12 +215,14 @@ impl Exec for IsGreaterThan {
     fn exec(
         &self,
         _ctx: &mut Context,
-        params: &[Value],
-        output: &mut Vec<Value>,
+        stack: &mut Vec<Value>,
+        param_base: usize,
     ) -> usize {
-        debug_assert_eq!(params.len(), 2);
+        debug_assert_eq!(stack.len() - param_base, 2);
 
-        output.push(Value::Bool(params[0].as_int() > params[1].as_int()));
+        let b = stack.pop().expect("expect 2 parameters");
+        let a = stack.pop().expect("expect 2 parameters");
+        stack.push(Value::Bool(a.as_int() > b.as_int()));
 
         0
     }
@@ -219,12 +235,14 @@ impl Exec for IsLessThan {
     fn exec(
         &self,
         _ctx: &mut Context,
-        params: &[Value],
-        output: &mut Vec<Value>,
+        stack: &mut Vec<Value>,
+        param_base: usize,
     ) -> usize {
-        debug_assert_eq!(params.len(), 2);
+        debug_assert_eq!(stack.len() - param_base, 2);
 
-        output.push(Value::Bool(params[0].as_int() < params[1].as_int()));
+        let b = stack.pop().expect("expect 2 parameters");
+        let a = stack.pop().expect("expect 2 parameters");
+        stack.push(Value::Bool(a.as_int() < b.as_int()));
 
         0
     }
@@ -237,12 +255,12 @@ impl Exec for Print {
     fn exec(
         &self,
         _ctx: &mut Context,
-        params: &[Value],
-        _output: &mut Vec<Value>,
+        stack: &mut Vec<Value>,
+        param_base: usize,
     ) -> usize {
-        debug_assert_eq!(params.len(), 1);
+        debug_assert_eq!(stack.len() - param_base, 1);
 
-        println!("{}", params[0].as_str());
+        println!("{}", stack.pop().expect("expect 1 parameter").as_str());
 
         0
     }
@@ -255,11 +273,13 @@ impl Exec for DoubleBranch {
     fn exec(
         &self,
         _ctx: &mut Context,
-        params: &[Value],
-        _output: &mut Vec<Value>,
+        stack: &mut Vec<Value>,
+        param_base: usize,
     ) -> usize {
-        debug_assert_eq!(params.len(), 1);
+        debug_assert_eq!(stack.len() - param_base, 1);
 
-        if params[0].as_bool() { 0 } else { 1 }
+        let a = stack.pop().expect("expect 1 parameter");
+
+        if a.as_bool() { 0 } else { 1 }
     }
 }
