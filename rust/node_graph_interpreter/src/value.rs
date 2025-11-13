@@ -1,4 +1,4 @@
-use std::{cell::RefCell, sync::Arc};
+use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 #[derive(Debug, Clone, Default)]
 pub enum Value {
@@ -10,7 +10,7 @@ pub enum Value {
     Int(i64),
 
     String(Arc<str>),
-    List(Arc<RefCell<Vec<Value>>>),
+    List(Rc<RefCell<Vec<Value>>>),
 
     LoopId(usize),
     LocalVariable(usize),

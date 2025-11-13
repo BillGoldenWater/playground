@@ -1,6 +1,6 @@
-use std::{cell::RefCell, sync::Arc};
+use std::{cell::RefCell, rc::Rc};
 
-use crate::{Context, Exec, Value};
+use crate::{Context, Exec, ParameterIndexes, Value};
 
 #[derive(Debug)]
 pub struct Noop;
@@ -22,21 +22,42 @@ pub struct LocalVariable;
 impl Exec for LocalVariable {
     fn exec(
         &self,
+        _ctx: &mut Context,
+        _params: &[Value],
+        _output: &mut Vec<Value>,
+    ) -> usize {
+        unreachable!()
+    }
+
+    fn manual_param(&self) -> bool {
+        true
+    }
+
+    fn exec_manual_param(
+        &self,
         ctx: &mut Context,
-        params: &[Value],
+        params: &[ParameterIndexes],
         output: &mut Vec<Value>,
     ) -> usize {
         debug_assert!((1..=2).contains(&params.len()));
 
-        let var_key = &params[0];
+        let mut params_out = ctx.value_cache_get();
+        ctx.query_params(&params[..1], &mut params_out);
+
+        let var_key = &params_out[0];
         let var = ctx.get_local_variable(var_key.as_local_variable());
 
         if var.is_uninit() {
-            *var = params[1].clone();
+            ctx.query_params(&params[1..], &mut params_out);
+            let var_key = &params_out[0];
+            let var = ctx.get_local_variable(var_key.as_local_variable());
+            *var = params_out[1].clone();
             output.push(var.clone());
         } else {
             output.push(var.clone());
         }
+
+        ctx.value_cache_ret(params_out);
 
         0
     }
@@ -72,7 +93,7 @@ impl Exec for ListAssemble {
         params: &[Value],
         output: &mut Vec<Value>,
     ) -> usize {
-        output.push(Value::List(Arc::new(RefCell::new(params.to_vec()))));
+        output.push(Value::List(Rc::new(RefCell::new(params.to_vec()))));
 
         0
     }

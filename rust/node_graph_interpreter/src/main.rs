@@ -1,11 +1,11 @@
 use std::{
     env::args,
-    sync::Arc,
+    sync::{Arc, atomic},
     time::{Duration, Instant},
 };
 
 use node_graph_interpreter::{
-    Context, FlowIndexes, Node, ParameterIndexes,
+    COUNT, Context, FlowIndexes, Node, ParameterIndexes,
     nodes::{
         Addition, DoubleBranch, IsGreaterThan, IsLessThan, ListAssemble,
         ListGet, ListLength, ListSet, LocalVariable, LocalVariableSet,
@@ -253,10 +253,16 @@ fn main() -> anyhow::Result<()> {
         count += 1;
     }
     println!(
-        "avg: {:?}, min: {min:?}, max: {max:?} - node graph bubble sort",
+        "run count: {count}, avg: {:?}, min: {min:?}, max: {max:?} - node graph bubble sort",
         cost_sum / count
     );
+    println!(
+        "node run: {}",
+        COUNT.load(atomic::Ordering::SeqCst) / count
+    );
     println!("{:?}", ctx.local_variables[2]);
+    // println!("{:?}", ctx.value_cache);
+    // println!("{:?}", ctx.pending_param_cache);
 
     if args().nth(1).is_none() {
         return Ok(());
@@ -287,7 +293,7 @@ fn main() -> anyhow::Result<()> {
         std::hint::black_box(&arr);
     }
     println!(
-        "avg: {:?}, min: {min:?}, max: {max:?} - bubble sort",
+        "run count: {count}, avg: {:?}, min: {min:?}, max: {max:?} - naive bubble sort",
         cost_sum / count
     );
     println!("{arr:?}");
@@ -311,7 +317,7 @@ fn main() -> anyhow::Result<()> {
         std::hint::black_box(&arr);
     }
     println!(
-        "avg: {:?}, min: {min:?}, max: {max:?} - std lib sort",
+        "run count: {count}, avg: {:?}, min: {min:?}, max: {max:?} - std lib sort",
         cost_sum / count
     );
     println!("{arr:?}");

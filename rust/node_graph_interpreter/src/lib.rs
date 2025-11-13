@@ -1,17 +1,27 @@
-use std::{fmt::Debug, hash::Hash, sync::Arc};
+use core::panic;
+use std::{
+    fmt::Debug,
+    hash::Hash,
+    sync::{
+        Arc,
+        atomic::{self, AtomicU32},
+    },
+};
 
 use crate::value::Value;
+
+pub static COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub mod nodes;
 pub mod value;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ParameterIndexes {
     pub node: usize,
     pub value: usize,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FlowIndexes {
     pub node: usize,
 }
@@ -25,6 +35,23 @@ pub trait Exec: Debug {
         params: &[Value],
         output: &mut Vec<Value>,
     ) -> usize;
+
+    fn manual_param(&self) -> bool {
+        false
+    }
+
+    /// fetch parameters manually
+    /// # Returns
+    /// next branch index, ignored in non exec node
+    fn exec_manual_param(
+        &self,
+        ctx: &mut Context,
+        params: &[ParameterIndexes],
+        output: &mut Vec<Value>,
+    ) -> usize {
+        let (..) = (ctx, params, output);
+        unreachable!();
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -51,28 +78,47 @@ pub enum Node {
     },
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct PendingParam {
+    idx: ParameterIndexes,
+    visited: bool,
+}
+
+impl From<ParameterIndexes> for PendingParam {
+    fn from(value: ParameterIndexes) -> Self {
+        Self {
+            idx: value,
+            visited: false,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Context {
     pub nodes: Arc<[Node]>,
     pub values: Box<[Option<Vec<Value>>]>,
     pub local_variables: Vec<Value>,
-    pub outputs: Vec<Vec<Value>>,
+    pub value_cache: Vec<Vec<Value>>,
+    pub pending_param_cache: Vec<Vec<PendingParam>>,
     // TODO: , and clear
     // loop_flags: HashMap<usize, bool>,
 }
 
 impl Context {
+    pub fn init(&mut self, nodes: &Arc<[Node]>) {
+        self.nodes = nodes.clone();
+        // TODO: in-place clear
+        self.values = vec![None; nodes.len()].into_boxed_slice();
+        self.local_variables = Vec::with_capacity(8);
+    }
+
     pub fn run_start(
         &mut self,
         nodes: Arc<[Node]>,
         idx: usize,
         values: Vec<Value>,
     ) {
-        self.nodes = nodes.clone();
-        // TODO: in-place clear
-        self.values = vec![None; nodes.len()].into_boxed_slice();
-        self.local_variables = Vec::with_capacity(8);
-        self.outputs = Vec::with_capacity(8);
+        self.init(&nodes);
 
         let Node::Start { next } = &nodes[idx] else {
             panic!("expect start node");
@@ -103,10 +149,11 @@ impl Context {
 
                     let mut params_out = self.value_cache_get();
                     self.query_params(&params, &mut params_out);
+                    COUNT.fetch_add(1, atomic::Ordering::SeqCst);
                     let branch_idx =
                         exec.exec(self, &params_out, &mut output);
+                    self.value_cache_ret(params_out);
 
-                    // TODO: in-place update if possible
                     if let Some(values) = &mut self.values[idx] {
                         values.clear();
                         values.extend_from_slice(&output);
@@ -133,11 +180,7 @@ impl Context {
         nodes: Arc<[Node]>,
         idx: usize,
     ) -> Box<[Value]> {
-        self.nodes = nodes.clone();
-        // TODO: in-place clear
-        self.values = vec![None; nodes.len()].into_boxed_slice();
-        self.local_variables = Default::default();
-        self.outputs = Vec::with_capacity(8);
+        self.init(&nodes);
 
         let Node::End { parameters } = &nodes[idx] else {
             panic!("expect end node");
@@ -154,51 +197,110 @@ impl Context {
         params_out: &mut Vec<Value>,
     ) {
         let nodes = self.nodes.clone();
-        params_out.extend(
-            params
-                .iter()
-                .map(|param_idx| self.query_param(&nodes, param_idx)),
-        );
-    }
 
-    pub fn query_param(
-        &mut self,
-        nodes: &[Node],
-        param_idx: &ParameterIndexes,
-    ) -> Value {
-        match &nodes[param_idx.node] {
-            Node::Constant { values } => values[param_idx.value].clone(),
-            Node::Start { .. } | Node::Exec { .. } => self.values
-                [param_idx.node]
-                .as_ref()
-                .map(|it| it[param_idx.value].clone())
-                .unwrap_or_default(),
-            Node::Operation { parameters, exec } => {
+        let mut pending = self.pending_param_cache_get();
+        pending
+            .extend(params.iter().rev().copied().map(PendingParam::from));
+
+        while let Some(PendingParam { idx, visited }) = pending.last_mut()
+        {
+            if *visited {
+                let Node::Operation { parameters, exec } =
+                    &nodes[idx.node]
+                else {
+                    panic!("expect Node::Operation");
+                };
+
                 let mut output = self.value_cache_get();
 
-                let mut params_out = self.value_cache_get();
-                self.query_params(parameters, &mut params_out);
+                COUNT.fetch_add(1, atomic::Ordering::SeqCst);
+                exec.exec(
+                    self,
+                    &params_out[params_out.len() - parameters.len()..],
+                    &mut output,
+                );
 
-                exec.exec(self, &params_out, &mut output);
-                let ret = output[param_idx.value].clone();
+                params_out.truncate(params_out.len() - parameters.len());
+                params_out.push(output[idx.value].clone());
 
                 self.value_cache_ret(output);
 
-                ret
-            }
-            Node::End { .. } => {
-                panic!("expect node that may output value")
+                pending.pop();
+            } else {
+                match &nodes[idx.node] {
+                    Node::Operation { parameters, exec } => {
+                        if exec.manual_param() {
+                            let mut output = self.value_cache_get();
+
+                            exec.exec_manual_param(
+                                self,
+                                parameters,
+                                &mut output,
+                            );
+                            params_out.push(output[idx.value].clone());
+
+                            self.value_cache_ret(output);
+
+                            pending.pop();
+                        } else {
+                            *visited = true;
+                            pending.extend(
+                                parameters
+                                    .iter()
+                                    .rev()
+                                    .copied()
+                                    .map(PendingParam::from),
+                            );
+                        }
+                    }
+
+                    Node::Constant { values } => {
+                        let v = values[idx.value].clone();
+                        params_out.push(v);
+                        pending.pop();
+                    }
+                    Node::Start { .. } | Node::Exec { .. } => {
+                        let v = self.values[idx.node]
+                            .as_ref()
+                            .map(|it| it[idx.value].clone())
+                            .unwrap_or_default();
+                        params_out.push(v);
+                        pending.pop();
+                    }
+
+                    Node::End { .. } => {
+                        panic!("expect node that will output value")
+                    }
+                }
             }
         }
+
+        self.pending_param_cache_ret(pending);
     }
 
     pub fn value_cache_get(&mut self) -> Vec<Value> {
-        self.outputs.pop().unwrap_or_else(|| Vec::with_capacity(8))
+        self.value_cache
+            .pop()
+            .unwrap_or_else(|| Vec::with_capacity(8))
     }
 
     pub fn value_cache_ret(&mut self, mut value: Vec<Value>) {
         value.clear();
-        self.outputs.push(value);
+        self.value_cache.push(value);
+    }
+
+    pub fn pending_param_cache_get(&mut self) -> Vec<PendingParam> {
+        self.pending_param_cache
+            .pop()
+            .unwrap_or_else(|| Vec::with_capacity(8))
+    }
+
+    pub fn pending_param_cache_ret(
+        &mut self,
+        mut value: Vec<PendingParam>,
+    ) {
+        value.clear();
+        self.pending_param_cache.push(value);
     }
 
     pub fn get_local_variable(&mut self, key: usize) -> &mut Value {
