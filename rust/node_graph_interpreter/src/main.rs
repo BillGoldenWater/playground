@@ -1,5 +1,4 @@
 use std::{
-    io::{Write, stdout},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -235,13 +234,12 @@ fn main() -> anyhow::Result<()> {
     let mut ctx = Context::default();
 
     let run_dur = 1.;
-    let run_start = Instant::now();
 
     let mut count = 0;
     let mut cost_sum = Duration::default();
     let mut min = Duration::MAX;
     let mut max = Duration::default();
-    while run_start.elapsed().as_secs_f64() < run_dur {
+    while cost_sum.as_secs_f64() < run_dur {
         let nodes = nodes.clone();
         let start = Instant::now();
 
@@ -256,14 +254,12 @@ fn main() -> anyhow::Result<()> {
     println!("avg: {:?}, min: {min:?}, max: {max:?}", cost_sum / count);
     println!("{:?}", ctx.lists);
 
-    let run_start = Instant::now();
-
     let mut count = 0;
     let mut cost_sum = Duration::from_secs_f64(0.0);
     let mut arr = vec![];
     let mut min = Duration::MAX;
     let mut max = Duration::default();
-    while run_start.elapsed().as_secs_f64() < run_dur {
+    while cost_sum.as_secs_f64() < run_dur {
         let start = Instant::now();
 
         arr = std::hint::black_box(vec![2, 1, 4, 6, 0]);
