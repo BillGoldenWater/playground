@@ -4,8 +4,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Context as _;
 use node_graph_interpreter::{
     COUNT, Code, Context, FlowIndexes, Node, ParameterIndexes,
+    logger::Logger,
     nodes::{
         Addition, DoubleBranch, IsGreaterThan, IsLessThan, ListAssemble,
         ListGet, ListLength, ListSet, LocalVariable, LocalVariableSet,
@@ -264,7 +266,21 @@ fn main() -> anyhow::Result<()> {
     // println!("{:?}", ctx.value_cache);
     // println!("{:?}", ctx.pending_param_cache);
 
-    if args().nth(1).is_none() {
+    let Some(arg) = args().nth(1) else {
+        return Ok(());
+    };
+    let flags = arg.parse::<u64>().context("parsing arg")?;
+
+    if flags & 0b10 != 0 {
+        let mut ctx = Context {
+            logger: Some(Logger::default()),
+            ..Context::default()
+        };
+        ctx.run_start(&code, 2, [].into());
+        ctx.logger.as_mut().unwrap().print_per_node(&code);
+    }
+
+    if flags & 1 == 0 {
         return Ok(());
     }
 

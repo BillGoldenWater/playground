@@ -12,7 +12,7 @@ pub enum Value {
     String(Arc<str>),
     List(Rc<RefCell<Vec<Value>>>),
 
-    LoopId(usize),
+    // LoopId(usize),
     LocalVariable(usize),
 }
 
@@ -57,13 +57,13 @@ impl Value {
         *v
     }
 
-    pub fn as_loop_id(&self) -> usize {
-        let Self::LoopId(v) = self else {
-            panic!("expect loop id, actual: {self:?}");
-        };
-
-        *v
-    }
+    // pub fn as_loop_id(&self) -> usize {
+    //     let Self::LoopId(v) = self else {
+    //         panic!("expect loop id, actual: {self:?}");
+    //     };
+    //
+    //     *v
+    // }
 
     /// Returns `true` if the value is [`Uninit`].
     ///

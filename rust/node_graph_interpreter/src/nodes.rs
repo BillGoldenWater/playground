@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::{Code, Context, Exec, ParameterIndexes, Value};
+use crate::{Code, Context, Exec, LogBegin, ParameterIndexes, Value};
 
 #[derive(Debug)]
 pub struct Noop;
@@ -57,10 +57,11 @@ impl Exec for LocalVariable {
         true
     }
 
-    fn exec_manual_param(
+    fn exec_manual(
         &self,
         ctx: &mut Context,
         code: &Code,
+        node: usize,
         params: &[ParameterIndexes],
         stack: &mut Vec<Value>,
     ) -> usize {
@@ -69,18 +70,37 @@ impl Exec for LocalVariable {
         let param_base = stack.len();
         ctx.query_params(code, &params[..1], stack);
 
+        let mut log_begin = ctx.log_begin(&stack[param_base..]);
+
         let var_key = &stack[param_base];
         let var = ctx.get_local_variable(var_key.as_local_variable());
 
         if var.is_uninit() {
+            let fetch_start = ctx.log_begin_time();
             ctx.query_params(code, &params[1..2], stack);
+            LogBegin::overwrite_parameters(
+                log_begin.as_mut(),
+                &stack[param_base..],
+            );
+            let fetch_dur = fetch_start.map(|it| it.elapsed());
+
             let var_key = &stack[param_base];
             let var = ctx.get_local_variable(var_key.as_local_variable());
             *var = stack[param_base + 1].clone();
             stack[param_base] = var.clone();
             stack.pop();
+
+            if let Some(begin) = log_begin {
+                ctx.log_end_subtract_duration(
+                    begin,
+                    node,
+                    &stack[param_base..],
+                    fetch_dur.unwrap(),
+                );
+            }
         } else {
-            stack[param_base] = var.clone()
+            stack[param_base] = var.clone();
+            ctx.log_end(log_begin, node, &stack[param_base..]);
         }
 
         0

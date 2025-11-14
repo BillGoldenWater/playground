@@ -7,12 +7,17 @@ use std::{
         Arc,
         atomic::{self, AtomicU32},
     },
+    time::{Duration, Instant},
 };
 
-use crate::value::Value;
+use crate::{
+    logger::{Logger, Record, ValueSnapshot},
+    value::Value,
+};
 
 pub static COUNT: AtomicU32 = AtomicU32::new(0);
 
+pub mod logger;
 pub mod nodes;
 pub mod value;
 
@@ -47,17 +52,18 @@ pub trait Exec: Debug {
         false
     }
 
-    /// fetch parameters manually
+    /// fetch parameters and logging manually
     /// # Returns
     /// next branch index, ignored in non exec node
-    fn exec_manual_param(
+    fn exec_manual(
         &self,
         ctx: &mut Context,
         code: &Code,
+        node: usize,
         params: &[ParameterIndexes],
         stack: &mut Vec<Value>,
     ) -> usize {
-        let (..) = (ctx, code, params, stack);
+        let (..) = (ctx, code, node, params, stack);
         unreachable!();
     }
 }
@@ -101,6 +107,24 @@ impl From<ParameterIndexes> for PendingParam {
     }
 }
 
+#[derive(Debug)]
+pub struct LogBegin {
+    pub parameters: Box<[ValueSnapshot]>,
+    pub start: Instant,
+}
+
+impl LogBegin {
+    pub fn overwrite_parameters(
+        begin: Option<&mut Self>,
+        params: &[Value],
+    ) {
+        if let Some(begin) = begin {
+            begin.parameters =
+                ValueSnapshot::from_values_iter(params.iter().cloned())
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Code<'code> {
     pub nodes: &'code [Node],
@@ -120,6 +144,8 @@ pub struct Context {
     pub local_variables: Vec<Value>,
     pub value_cache: Vec<Vec<Value>>,
     pub pending_param_cache: Vec<Vec<PendingParam>>,
+
+    pub logger: Option<Logger>,
     // TODO: , and clear
     // loop_flags: HashMap<usize, bool>,
 }
@@ -169,8 +195,11 @@ impl Context {
                     let mut stack = self.value_cache_get();
 
                     self.query_params(code, parameters, &mut stack);
+
                     COUNT.fetch_add(1, atomic::Ordering::SeqCst);
+                    let log_begin = self.log_begin(&stack);
                     let branch_idx = exec.exec(self, code, &mut stack, 0);
+                    self.log_end(log_begin, idx, &stack);
 
                     if let Some(values) = &mut self.values[idx] {
                         values.clear();
@@ -227,7 +256,14 @@ impl Context {
                 let param_base = params_out.len() - parameters.len();
 
                 COUNT.fetch_add(1, atomic::Ordering::SeqCst);
+                let log_begin = self.log_begin(&params_out[param_base..]);
                 exec.exec(self, code, params_out, param_base);
+                self.log_end(
+                    log_begin,
+                    idx.node,
+                    &params_out[param_base..],
+                );
+
                 params_out.swap(param_base, param_base + idx.value);
                 params_out.truncate(param_base + 1);
 
@@ -238,8 +274,9 @@ impl Context {
                         if exec.manual_param() {
                             let output_base = params_out.len();
 
-                            exec.exec_manual_param(
-                                self, code, parameters, params_out,
+                            exec.exec_manual(
+                                self, code, idx.node, parameters,
+                                params_out,
                             );
 
                             params_out.swap(
@@ -283,6 +320,60 @@ impl Context {
         }
 
         self.pending_param_cache_ret(pending);
+    }
+
+    pub fn is_logging(&self) -> bool {
+        self.logger.is_some()
+    }
+
+    pub fn log_begin_time(&self) -> Option<Instant> {
+        self.is_logging().then(Instant::now)
+    }
+
+    pub fn log_begin(&mut self, params: &[Value]) -> Option<LogBegin> {
+        if self.is_logging() {
+            let parameters =
+                ValueSnapshot::from_values_iter(params.iter().cloned());
+            let start = Instant::now();
+            Some(LogBegin { parameters, start })
+        } else {
+            None
+        }
+    }
+
+    pub fn log_end(
+        &mut self,
+        begin: Option<LogBegin>,
+        node: usize,
+        outputs: &[Value],
+    ) {
+        if let Some(begin) = begin {
+            self.log_end_subtract_duration(
+                begin,
+                node,
+                outputs,
+                Duration::ZERO,
+            );
+        }
+    }
+
+    pub fn log_end_subtract_duration(
+        &mut self,
+        begin: LogBegin,
+        node: usize,
+        outputs: &[Value],
+        dur_sub: Duration,
+    ) {
+        let LogBegin { parameters, start } = begin;
+        let duration = start.elapsed() - dur_sub;
+        let outputs =
+            ValueSnapshot::from_values_iter(outputs.iter().cloned());
+        self.logger.as_mut().unwrap().record(Record {
+            node,
+            duration,
+            parameters,
+            outputs,
+        });
     }
 
     pub fn value_cache_get(&mut self) -> Vec<Value> {
