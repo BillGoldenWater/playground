@@ -2,6 +2,7 @@ use core::panic;
 use std::{
     fmt::Debug,
     hash::Hash,
+    ops::Index,
     sync::{
         Arc,
         atomic::{self, AtomicU32},
@@ -37,6 +38,7 @@ pub trait Exec: Debug {
     fn exec(
         &self,
         ctx: &mut Context,
+        code: &Code,
         stack: &mut Vec<Value>,
         param_base: usize,
     ) -> usize;
@@ -51,10 +53,11 @@ pub trait Exec: Debug {
     fn exec_manual_param(
         &self,
         ctx: &mut Context,
+        code: &Code,
         params: &[ParameterIndexes],
         stack: &mut Vec<Value>,
     ) -> usize {
-        let (..) = (ctx, params, stack);
+        let (..) = (ctx, code, params, stack);
         unreachable!();
     }
 }
@@ -98,9 +101,21 @@ impl From<ParameterIndexes> for PendingParam {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Code<'code> {
+    pub nodes: &'code [Node],
+}
+
+impl Index<usize> for Code<'_> {
+    type Output = Node;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.nodes[index]
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Context {
-    pub nodes: Arc<[Node]>,
     pub values: Box<[Option<Vec<Value>>]>,
     pub local_variables: Vec<Value>,
     pub value_cache: Vec<Vec<Value>>,
@@ -110,39 +125,42 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn init(&mut self, nodes: &Arc<[Node]>) {
-        self.nodes = nodes.clone();
-        // TODO: in-place clear
-        self.values = vec![None; nodes.len()].into_boxed_slice();
-        self.local_variables = Vec::with_capacity(8);
+    pub fn init(&mut self, code: &Code) {
+        let nodes_len = code.nodes.len();
+        if self.values.len() == nodes_len {
+            self.values.fill(None);
+        } else {
+            self.values = vec![None; nodes_len].into_boxed_slice();
+        }
+        self.local_variables.clear();
+        self.local_variables.reserve(8);
     }
 
     pub fn run_start(
         &mut self,
-        nodes: Arc<[Node]>,
+        code: &Code,
         idx: usize,
         values: Vec<Value>,
     ) {
-        self.init(&nodes);
+        self.init(code);
 
-        let Node::Start { next } = &nodes[idx] else {
+        let Node::Start { next } = &code[idx] else {
             panic!("expect start node");
         };
 
         self.values[idx] = Some(values);
 
         for idx in next.iter().rev() {
-            self.run_inner(idx.node);
+            self.run_inner(code, idx.node);
         }
     }
 
-    pub fn run_inner(&mut self, idx: usize) {
-        let nodes = self.nodes.clone();
+    pub fn run_inner(&mut self, code: &Code, idx: usize) {
         let mut exec_queue = Vec::<usize>::with_capacity(8);
         exec_queue.push(idx);
 
         while let Some(idx) = exec_queue.pop() {
-            match &nodes[idx] {
+            match &code[idx] {
                 Node::Exec {
                     parameters,
                     exec,
@@ -150,9 +168,9 @@ impl Context {
                 } => {
                     let mut stack = self.value_cache_get();
 
-                    self.query_params(parameters, &mut stack);
+                    self.query_params(code, parameters, &mut stack);
                     COUNT.fetch_add(1, atomic::Ordering::SeqCst);
-                    let branch_idx = exec.exec(self, &mut stack, 0);
+                    let branch_idx = exec.exec(self, code, &mut stack, 0);
 
                     if let Some(values) = &mut self.values[idx] {
                         values.clear();
@@ -175,29 +193,24 @@ impl Context {
         }
     }
 
-    pub fn run_end(
-        &mut self,
-        nodes: Arc<[Node]>,
-        idx: usize,
-    ) -> Box<[Value]> {
-        self.init(&nodes);
+    pub fn run_end(&mut self, code: &Code, idx: usize) -> Box<[Value]> {
+        self.init(code);
 
-        let Node::End { parameters } = &nodes[idx] else {
+        let Node::End { parameters } = &code[idx] else {
             panic!("expect end node");
         };
 
         let mut output = self.value_cache_get();
-        self.query_params(parameters, &mut output);
+        self.query_params(code, parameters, &mut output);
         output.into_boxed_slice()
     }
 
     pub fn query_params(
         &mut self,
+        code: &Code,
         params: &[ParameterIndexes],
         params_out: &mut Vec<Value>,
     ) {
-        let nodes = self.nodes.clone();
-
         let mut pending = self.pending_param_cache_get();
         pending
             .extend(params.iter().rev().copied().map(PendingParam::from));
@@ -206,7 +219,7 @@ impl Context {
         {
             if *visited {
                 let Node::Operation { parameters, exec } =
-                    &nodes[idx.node]
+                    &code[idx.node]
                 else {
                     panic!("expect Node::Operation");
                 };
@@ -214,19 +227,19 @@ impl Context {
                 let param_base = params_out.len() - parameters.len();
 
                 COUNT.fetch_add(1, atomic::Ordering::SeqCst);
-                exec.exec(self, params_out, param_base);
+                exec.exec(self, code, params_out, param_base);
                 params_out.swap(param_base, param_base + idx.value);
                 params_out.truncate(param_base + 1);
 
                 pending.pop();
             } else {
-                match &nodes[idx.node] {
+                match &code[idx.node] {
                     Node::Operation { parameters, exec } => {
                         if exec.manual_param() {
                             let output_base = params_out.len();
 
                             exec.exec_manual_param(
-                                self, parameters, params_out,
+                                self, code, parameters, params_out,
                             );
 
                             params_out.swap(

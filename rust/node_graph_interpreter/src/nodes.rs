@@ -1,6 +1,6 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::{Context, Exec, ParameterIndexes, Value};
+use crate::{Code, Context, Exec, ParameterIndexes, Value};
 
 #[derive(Debug)]
 pub struct Noop;
@@ -9,6 +9,7 @@ impl Exec for Noop {
     fn exec(
         &self,
         _ctx: &mut Context,
+        _code: &Code,
         _stack: &mut Vec<Value>,
         _param_base: usize,
     ) -> usize {
@@ -22,11 +23,34 @@ pub struct LocalVariable;
 impl Exec for LocalVariable {
     fn exec(
         &self,
-        _ctx: &mut Context,
-        _stack: &mut Vec<Value>,
-        _param_base: usize,
+        ctx: &mut Context,
+        _code: &Code,
+        stack: &mut Vec<Value>,
+        param_base: usize,
     ) -> usize {
-        unreachable!()
+        let param_len = stack.len() - param_base;
+        debug_assert!((1..=2).contains(&param_len));
+
+        if param_len == 1 {
+            let var_key = stack.pop().expect("expect 1 parameters");
+
+            let var = ctx.get_local_variable(var_key.as_local_variable());
+            stack.push(var.clone());
+        } else {
+            let init = stack.pop().expect("expect 2 parameters");
+            let var_key = stack.pop().expect("expect 2 parameters");
+
+            let var = ctx.get_local_variable(var_key.as_local_variable());
+
+            if var.is_uninit() {
+                *var = init.clone();
+                stack.push(init);
+            } else {
+                stack.push(var.clone());
+            }
+        }
+
+        0
     }
 
     fn manual_param(&self) -> bool {
@@ -36,19 +60,20 @@ impl Exec for LocalVariable {
     fn exec_manual_param(
         &self,
         ctx: &mut Context,
+        code: &Code,
         params: &[ParameterIndexes],
         stack: &mut Vec<Value>,
     ) -> usize {
         debug_assert!((1..=2).contains(&params.len()));
 
         let param_base = stack.len();
-        ctx.query_params(&params[..1], stack);
+        ctx.query_params(code, &params[..1], stack);
 
         let var_key = &stack[param_base];
         let var = ctx.get_local_variable(var_key.as_local_variable());
 
         if var.is_uninit() {
-            ctx.query_params(&params[1..2], stack);
+            ctx.query_params(code, &params[1..2], stack);
             let var_key = &stack[param_base];
             let var = ctx.get_local_variable(var_key.as_local_variable());
             *var = stack[param_base + 1].clone();
@@ -69,6 +94,7 @@ impl Exec for LocalVariableSet {
     fn exec(
         &self,
         ctx: &mut Context,
+        _code: &Code,
         stack: &mut Vec<Value>,
         param_base: usize,
     ) -> usize {
@@ -92,6 +118,7 @@ impl Exec for ListAssemble {
     fn exec(
         &self,
         _ctx: &mut Context,
+        _code: &Code,
         stack: &mut Vec<Value>,
         param_base: usize,
     ) -> usize {
@@ -110,6 +137,7 @@ impl Exec for ListGet {
     fn exec(
         &self,
         _ctx: &mut Context,
+        _code: &Code,
         stack: &mut Vec<Value>,
         param_base: usize,
     ) -> usize {
@@ -134,6 +162,7 @@ impl Exec for ListSet {
     fn exec(
         &self,
         _ctx: &mut Context,
+        _code: &Code,
         stack: &mut Vec<Value>,
         param_base: usize,
     ) -> usize {
@@ -156,6 +185,7 @@ impl Exec for ListLength {
     fn exec(
         &self,
         _ctx: &mut Context,
+        _code: &Code,
         stack: &mut Vec<Value>,
         param_base: usize,
     ) -> usize {
@@ -175,6 +205,7 @@ impl Exec for Addition {
     fn exec(
         &self,
         _ctx: &mut Context,
+        _code: &Code,
         stack: &mut Vec<Value>,
         param_base: usize,
     ) -> usize {
@@ -195,6 +226,7 @@ impl Exec for Subtraction {
     fn exec(
         &self,
         _ctx: &mut Context,
+        _code: &Code,
         stack: &mut Vec<Value>,
         param_base: usize,
     ) -> usize {
@@ -215,6 +247,7 @@ impl Exec for IsGreaterThan {
     fn exec(
         &self,
         _ctx: &mut Context,
+        _code: &Code,
         stack: &mut Vec<Value>,
         param_base: usize,
     ) -> usize {
@@ -235,6 +268,7 @@ impl Exec for IsLessThan {
     fn exec(
         &self,
         _ctx: &mut Context,
+        _code: &Code,
         stack: &mut Vec<Value>,
         param_base: usize,
     ) -> usize {
@@ -255,6 +289,7 @@ impl Exec for Print {
     fn exec(
         &self,
         _ctx: &mut Context,
+        _code: &Code,
         stack: &mut Vec<Value>,
         param_base: usize,
     ) -> usize {
@@ -273,6 +308,7 @@ impl Exec for DoubleBranch {
     fn exec(
         &self,
         _ctx: &mut Context,
+        _code: &Code,
         stack: &mut Vec<Value>,
         param_base: usize,
     ) -> usize {

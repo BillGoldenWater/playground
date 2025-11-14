@@ -5,7 +5,7 @@ use std::{
 };
 
 use node_graph_interpreter::{
-    COUNT, Context, FlowIndexes, Node, ParameterIndexes,
+    COUNT, Code, Context, FlowIndexes, Node, ParameterIndexes,
     nodes::{
         Addition, DoubleBranch, IsGreaterThan, IsLessThan, ListAssemble,
         ListGet, ListLength, ListSet, LocalVariable, LocalVariableSet,
@@ -231,6 +231,7 @@ fn main() -> anyhow::Result<()> {
     // avoid any possible compile time optimization
     // for this specific nodes combination
     let nodes = core::hint::black_box(nodes);
+    let code = Code { nodes: &nodes };
 
     let mut ctx = Context::default();
 
@@ -241,10 +242,9 @@ fn main() -> anyhow::Result<()> {
     let mut min = Duration::MAX;
     let mut max = Duration::default();
     while cost_sum.as_secs_f64() < run_dur {
-        let nodes = nodes.clone();
         let start = Instant::now();
 
-        ctx.run_start(nodes, 2, [].into());
+        ctx.run_start(&code, 2, [].into());
 
         let dur = start.elapsed();
         cost_sum += dur;
