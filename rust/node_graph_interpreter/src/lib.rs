@@ -13,6 +13,7 @@ use std::{
 use crate::{
     logger::{Logger, Record, ValueSnapshot},
     value::Value,
+    vec_pool::VecPool,
 };
 
 pub static COUNT: AtomicU32 = AtomicU32::new(0);
@@ -20,6 +21,7 @@ pub static COUNT: AtomicU32 = AtomicU32::new(0);
 pub mod logger;
 pub mod nodes;
 pub mod value;
+pub mod vec_pool;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ParameterIndexes {
@@ -142,8 +144,9 @@ impl Index<usize> for Code<'_> {
 pub struct Context {
     pub values: Box<[Option<Vec<Value>>]>,
     pub local_variables: Vec<Value>,
-    pub value_cache: Vec<Vec<Value>>,
-    pub pending_param_cache: Vec<Vec<PendingParam>>,
+    pub pool_usize: VecPool<usize>,
+    pub pool_value: VecPool<Value>,
+    pub pool_pending_param: VecPool<PendingParam>,
 
     pub logger: Option<Logger>,
     // TODO: , and clear
@@ -182,7 +185,7 @@ impl Context {
     }
 
     pub fn run_inner(&mut self, code: &Code, idx: usize) {
-        let mut exec_queue = Vec::<usize>::with_capacity(8);
+        let mut exec_queue = self.pool_usize.get();
         exec_queue.push(idx);
 
         while let Some(idx) = exec_queue.pop() {
@@ -192,19 +195,28 @@ impl Context {
                     exec,
                     next,
                 } => {
-                    let mut stack = self.value_cache_get();
-
-                    self.query_params(code, parameters, &mut stack);
-
+                    let mut stack = self.pool_value.get();
                     COUNT.fetch_add(1, atomic::Ordering::SeqCst);
-                    let log_begin = self.log_begin(&stack);
-                    let branch_idx = exec.exec(self, code, &mut stack, 0);
-                    self.log_end(log_begin, idx, &stack);
+
+                    let branch_idx = if exec.manual_param() {
+                        exec.exec_manual(
+                            self, code, idx, parameters, &mut stack,
+                        )
+                    } else {
+                        self.query_params(code, parameters, &mut stack);
+
+                        let log_begin = self.log_begin(&stack);
+                        let branch_idx =
+                            exec.exec(self, code, &mut stack, 0);
+                        self.log_end(log_begin, idx, &stack);
+
+                        branch_idx
+                    };
 
                     if let Some(values) = &mut self.values[idx] {
                         values.clear();
                         values.extend_from_slice(&stack);
-                        self.value_cache_ret(stack);
+                        self.pool_value.ret(stack);
                     } else {
                         self.values[idx] = Some(stack)
                     }
@@ -220,6 +232,8 @@ impl Context {
                 }
             }
         }
+
+        self.pool_usize.ret(exec_queue);
     }
 
     pub fn run_end(&mut self, code: &Code, idx: usize) -> Box<[Value]> {
@@ -229,7 +243,7 @@ impl Context {
             panic!("expect end node");
         };
 
-        let mut output = self.value_cache_get();
+        let mut output = self.pool_value.get();
         self.query_params(code, parameters, &mut output);
         output.into_boxed_slice()
     }
@@ -240,7 +254,7 @@ impl Context {
         params: &[ParameterIndexes],
         params_out: &mut Vec<Value>,
     ) {
-        let mut pending = self.pending_param_cache_get();
+        let mut pending = self.pool_pending_param.get();
         pending
             .extend(params.iter().rev().copied().map(PendingParam::from));
 
@@ -319,7 +333,7 @@ impl Context {
             }
         }
 
-        self.pending_param_cache_ret(pending);
+        self.pool_pending_param.ret(pending);
     }
 
     pub fn is_logging(&self) -> bool {
@@ -374,31 +388,6 @@ impl Context {
             parameters,
             outputs,
         });
-    }
-
-    pub fn value_cache_get(&mut self) -> Vec<Value> {
-        self.value_cache
-            .pop()
-            .unwrap_or_else(|| Vec::with_capacity(8))
-    }
-
-    pub fn value_cache_ret(&mut self, mut value: Vec<Value>) {
-        value.clear();
-        self.value_cache.push(value);
-    }
-
-    pub fn pending_param_cache_get(&mut self) -> Vec<PendingParam> {
-        self.pending_param_cache
-            .pop()
-            .unwrap_or_else(|| Vec::with_capacity(8))
-    }
-
-    pub fn pending_param_cache_ret(
-        &mut self,
-        mut value: Vec<PendingParam>,
-    ) {
-        value.clear();
-        self.pending_param_cache.push(value);
     }
 
     pub fn get_local_variable(&mut self, key: usize) -> &mut Value {
