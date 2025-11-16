@@ -8,6 +8,10 @@ pub struct Logger {
 }
 
 impl Logger {
+    pub fn clear(&mut self) {
+        self.logs.clear();
+    }
+
     pub fn record(&mut self, record: Record) {
         self.logs.push(record);
     }
@@ -127,6 +131,7 @@ pub enum ValueSnapshot {
     String(Arc<str>),
     List(Box<[ValueSnapshot]>),
 
+    LoopId(usize),
     LocalVariable(usize),
 }
 
@@ -151,6 +156,7 @@ impl ValueSnapshot {
                     .map(Self::from_value)
                     .collect(),
             ),
+            Value::LoopId(id) => Self::LoopId(id),
             Value::LocalVariable(key) => Self::LocalVariable(key),
         }
     }

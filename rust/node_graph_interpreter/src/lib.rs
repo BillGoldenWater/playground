@@ -142,15 +142,15 @@ impl Index<usize> for Code<'_> {
 
 #[derive(Debug, Default)]
 pub struct Context {
+    pub logger: Option<Logger>,
+
     pub values: Box<[Option<Vec<Value>>]>,
     pub local_variables: Vec<Value>,
+    pub loop_flags: Vec<bool>,
+
     pub pool_usize: VecPool<usize>,
     pub pool_value: VecPool<Value>,
     pub pool_pending_param: VecPool<PendingParam>,
-
-    pub logger: Option<Logger>,
-    // TODO: , and clear
-    // loop_flags: HashMap<usize, bool>,
 }
 
 impl Context {
@@ -161,6 +161,9 @@ impl Context {
         } else {
             self.values = vec![None; nodes_len].into_boxed_slice();
         }
+
+        self.loop_flags.clear();
+
         self.local_variables.clear();
         self.local_variables.reserve(8);
     }
@@ -398,35 +401,20 @@ impl Context {
         &mut self.local_variables[key]
     }
 
-    // pub fn list_assemble(&mut self, values: Vec<Value>) -> Value {
-    //     self.lists.push(values);
-    //     Value::List(self.lists.len() - 1)
-    // }
-    //
-    // pub fn list_get(&mut self, list: usize, idx: usize) -> Value {
-    //     self.lists[list][idx].clone()
-    // }
-    //
-    // pub fn list_set(&mut self, list: usize, idx: usize, value: Value) {
-    //     self.lists[list][idx] = value;
-    // }
-    //
-    // pub fn list_len(&mut self, list: usize) -> usize {
-    //     self.lists[list].len()
-    // }
+    pub fn loop_enter(&mut self) -> usize {
+        self.loop_flags.push(true);
+        self.loop_flags.len() - 1
+    }
 
-    // pub fn loop_begin(&mut self, loop_id: usize) {
-    //     self.loop_flags
-    //         .entry(loop_id)
-    //         .and_modify(|it| *it = false)
-    //         .or_insert(false);
-    // }
-    //
-    // pub fn loop_is_breaking(&mut self, loop_id: usize) -> bool {
-    //     *self.loop_flags.get(&loop_id).expect("expect valid loop_id")
-    // }
-    //
-    // pub fn loop_break(&mut self, loop_id: usize) {
-    //     self.loop_flags.entry(loop_id).and_modify(|it| *it = true);
-    // }
+    pub fn loop_is_running(&self, id: usize) -> bool {
+        self.loop_flags[id]
+    }
+
+    pub fn loop_break(&mut self, id: usize) {
+        self.loop_flags[id] = false;
+    }
+
+    pub fn loop_exit(&mut self, id: usize) {
+        self.loop_flags.truncate(id);
+    }
 }

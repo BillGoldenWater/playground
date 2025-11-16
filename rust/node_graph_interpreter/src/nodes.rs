@@ -1,6 +1,8 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::{Code, Context, Exec, LogBegin, ParameterIndexes, Value};
+use crate::{
+    Code, Context, Exec, LogBegin, Node, ParameterIndexes, Value,
+};
 
 #[derive(Debug)]
 pub struct Noop;
@@ -337,5 +339,100 @@ impl Exec for DoubleBranch {
         let a = stack.pop().expect("expect 1 parameter");
 
         if a.as_bool() { 0 } else { 1 }
+    }
+}
+
+#[derive(Debug)]
+pub struct FiniteLoop;
+
+impl Exec for FiniteLoop {
+    fn exec(
+        &self,
+        _ctx: &mut Context,
+        _code: &Code,
+        _stack: &mut Vec<Value>,
+        _param_base: usize,
+    ) -> usize {
+        unreachable!()
+    }
+
+    fn manual_param(&self) -> bool {
+        true
+    }
+
+    fn exec_manual(
+        &self,
+        ctx: &mut Context,
+        code: &Code,
+        node: usize,
+        params: &[ParameterIndexes],
+        stack: &mut Vec<Value>,
+    ) -> usize {
+        debug_assert_eq!(params.len(), 2);
+        let param_base = stack.len();
+        ctx.query_params(code, params, stack);
+
+        let Node::Exec { next, .. } = &code[node] else {
+            unreachable!("expect self node being an exec");
+        };
+
+        let mut log_begin = ctx.log_begin(&stack[param_base..]);
+
+        let mut end = stack.pop().expect("expect 2 parameters");
+        let start = stack.pop().expect("expect 2 parameters");
+
+        let id = ctx.loop_enter();
+
+        let mut idx = start.as_int();
+        while idx <= end.as_int() && ctx.loop_is_running(id) {
+            let idx_value = Value::Int(idx);
+            if let Some(values) = &mut ctx.values[node] {
+                values[0] = idx_value.clone();
+            } else {
+                ctx.values[node] =
+                    Some(vec![idx_value.clone(), Value::LoopId(id)]);
+            }
+
+            ctx.log_end(log_begin, node, &[idx_value, Value::LoopId(id)]);
+            for flow in &next[0] {
+                ctx.run_inner(code, flow.node);
+            }
+
+            ctx.query_params(code, params, stack);
+            log_begin = ctx.log_begin(&stack[param_base..]);
+
+            end = stack.pop().expect("expect 2 parameters");
+            // start is never used again
+            let _ = stack.pop().expect("expect 2 parameters");
+
+            idx += 1;
+        }
+
+        ctx.loop_exit(id);
+
+        stack.push(Value::Int(idx));
+        stack.push(Value::LoopId(id));
+
+        ctx.log_end(log_begin, node, &stack[param_base..]);
+
+        1
+    }
+}
+
+#[derive(Debug)]
+pub struct BreakLoop;
+
+impl Exec for BreakLoop {
+    fn exec(
+        &self,
+        ctx: &mut Context,
+        _code: &Code,
+        stack: &mut Vec<Value>,
+        _param_base: usize,
+    ) -> usize {
+        let loop_id = stack.pop().expect("expect 1 parameter");
+        ctx.loop_break(loop_id.as_loop_id());
+
+        0
     }
 }
