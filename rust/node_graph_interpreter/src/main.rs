@@ -1,6 +1,6 @@
 use std::{
     env::args,
-    sync::{Arc, atomic},
+    sync::atomic,
     time::{Duration, Instant},
 };
 
@@ -9,9 +9,9 @@ use node_graph_interpreter::{
     COUNT, Code, Context, FlowIndexes, Node, ParameterIndexes,
     logger::Logger,
     nodes::{
-        Addition, DoubleBranch, FiniteLoop, IsGreaterThan, ListAssemble,
-        ListGet, ListLength, ListSet, LocalVariable, LocalVariableSet,
-        Subtraction,
+        ADDITION, DOUBLE_BRANCH, FINITE_LOOP, IS_GREATER_THAN,
+        LIST_ASSEMBLE, LIST_GET, LIST_LENGTH, LIST_SET, LOCAL_VARIABLE,
+        LOCAL_VARIABLE_SET, SUBTRACTION,
     },
     value::Value,
 };
@@ -28,14 +28,7 @@ fn main() -> anyhow::Result<()> {
     let param = |node| param_n(node, 0);
     let flow = |node| FlowIndexes { node };
 
-    let finite_loop = Arc::from(FiniteLoop);
-    let var = Arc::from(LocalVariable);
-    let list_get = Arc::from(ListGet);
-    let list_set = Arc::from(ListSet);
-    let gt = Arc::from(IsGreaterThan);
-    let sub = Arc::from(Subtraction);
-
-    let nodes: Arc<[Node]> = vec![
+    let nodes = &[
         // 0
         Node::Constant {
             values: [
@@ -76,106 +69,105 @@ fn main() -> anyhow::Result<()> {
                 constant(4),
             ]
             .into(),
-            exec: Arc::from(ListAssemble),
+            exec: LIST_ASSEMBLE,
         },
         // 3 local variable, list
         Node::Operation {
             parameters: [constant(5), param(2)].into(),
-            exec: var.clone(),
+            exec: LOCAL_VARIABLE,
         },
         // 4 list length
         Node::Operation {
             parameters: [param(3)].into(),
-            exec: Arc::from(ListLength),
+            exec: LIST_LENGTH,
         },
         // 5 list length - 1
         Node::Operation {
             parameters: [param(4), constant(9)].into(),
-            exec: sub.clone(),
+            exec: SUBTRACTION,
         },
         // 6 local variable, list length - 1
         Node::Operation {
             parameters: [constant(6), param(5)].into(),
-            exec: var.clone(),
+            exec: LOCAL_VARIABLE,
         },
         // 7 loop 1, 0..=(len - 1)
         Node::Exec {
             parameters: [constant(8), param(6)].into(),
             next: [[flow(9)].into(), [].into()].into(),
-            exec: finite_loop.clone(),
+            exec: FINITE_LOOP,
         },
         // 8 list length - 2
         Node::Operation {
             parameters: [param(6), constant(9)].into(),
-            exec: sub.clone(),
+            exec: SUBTRACTION,
         },
         // 9 loop 2, 0..=(len - 2)
         Node::Exec {
             parameters: [constant(8), param(8)].into(),
             next: [[flow(15)].into(), [].into()].into(),
-            exec: finite_loop.clone(),
+            exec: FINITE_LOOP,
         },
         // 10 loop 2 idx + 1
         Node::Operation {
             parameters: [param(9), constant(9)].into(),
-            exec: Arc::from(Addition),
+            exec: ADDITION,
         },
         // 11 list[loop 2 idx]
         Node::Operation {
             parameters: [param(3), param(9)].into(),
-            exec: list_get.clone(),
+            exec: LIST_GET,
         },
         // 12 list[loop 2 idx + 1]
         Node::Operation {
             parameters: [param(3), param(10)].into(),
-            exec: list_get.clone(),
+            exec: LIST_GET,
         },
         // 13 list[loop 2 idx] > list[loop 2 idx + 1]
         Node::Operation {
             parameters: [param(11), param(12)].into(),
-            exec: gt.clone(),
+            exec: IS_GREATER_THAN,
         },
         // 14 list[loop 2 idx] > list[loop 2 idx + 1]
         Node::Operation {
             parameters: [param(11), param(12)].into(),
-            exec: gt.clone(),
+            exec: IS_GREATER_THAN,
         },
         // 15 if list[loop 2 idx] > list[loop 2 idx + 1]
         Node::Exec {
             parameters: [param(14)].into(),
             next: [[flow(16)].into(), [].into()].into(),
-            exec: Arc::new(DoubleBranch),
+            exec: DOUBLE_BRANCH,
         },
         // 16 set temp = list[loop 2 idx]
         Node::Exec {
             parameters: [constant(7), param(11)].into(),
             next: [[flow(17)].into()].into(),
-            exec: Arc::from(LocalVariableSet),
+            exec: LOCAL_VARIABLE_SET,
         },
         // 17 set list[loop 2 idx] = list[loop 2 idx + 1]
         Node::Exec {
             parameters: [param(3), param(9), param(12)].into(),
             next: [[flow(19)].into()].into(),
-            exec: list_set.clone(),
+            exec: LIST_SET,
         },
         // 18 local variable temp
         Node::Operation {
             parameters: [constant(7)].into(),
-            exec: var.clone(),
+            exec: LOCAL_VARIABLE,
         },
         // 19 set list[loop 2 idx + 1] = temp
         Node::Exec {
             parameters: [param(3), param(10), param(18)].into(),
             next: [[].into()].into(),
-            exec: list_set.clone(),
+            exec: LIST_SET,
         },
-    ]
-    .into();
+    ];
 
     // avoid any possible compile time optimization
     // for this specific nodes combination
     let nodes = core::hint::black_box(nodes);
-    let code = Code { nodes: &nodes };
+    let code = Code { nodes };
 
     let mut ctx = Context::default();
 

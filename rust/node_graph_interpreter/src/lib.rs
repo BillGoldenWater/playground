@@ -3,10 +3,7 @@ use std::{
     fmt::Debug,
     hash::Hash,
     ops::Index,
-    sync::{
-        Arc,
-        atomic::{self, AtomicU32},
-    },
+    sync::atomic::{self, AtomicU32},
     time::{Duration, Instant},
 };
 
@@ -34,40 +31,61 @@ pub struct FlowIndexes {
     pub node: usize,
 }
 
-pub trait Exec: Debug {
-    /// `param_base` points to the first parameter in stack,
-    /// equal to stack.len() if empty parameter
-    ///
-    /// implementation need to consume all the parameter,
-    /// then push output
-    /// # Returns
-    /// next branch index, ignored in non exec node
-    fn exec(
-        &self,
-        ctx: &mut Context,
-        code: &Code,
-        stack: &mut Vec<Value>,
-        param_base: usize,
-    ) -> usize;
+// pub trait Exec: Debug {
+//     /// `param_base` points to the first parameter in stack,
+//     /// equal to stack.len() if empty parameter
+//     ///
+//     /// implementation need to consume all the parameter,
+//     /// then push output
+//     /// # Returns
+//     /// next branch index, ignored in non exec node
+//     fn exec(
+//         &self,
+//         ctx: &mut Context,
+//         code: &Code,
+//         stack: &mut Vec<Value>,
+//         param_base: usize,
+//     ) -> usize;
+//
+//     fn manual_param(&self) -> bool {
+//         false
+//     }
+//
+//     /// fetch parameters and logging manually
+//     /// # Returns
+//     /// next branch index, ignored in non exec node
+//     fn exec_manual(
+//         &self,
+//         ctx: &mut Context,
+//         code: &Code,
+//         node: usize,
+//         params: &[ParameterIndexes],
+//         stack: &mut Vec<Value>,
+//     ) -> usize {
+//         let (..) = (ctx, code, node, params, stack);
+//         unreachable!();
+//     }
+// }
 
-    fn manual_param(&self) -> bool {
-        false
-    }
-
-    /// fetch parameters and logging manually
-    /// # Returns
-    /// next branch index, ignored in non exec node
-    fn exec_manual(
-        &self,
-        ctx: &mut Context,
-        code: &Code,
-        node: usize,
-        params: &[ParameterIndexes],
-        stack: &mut Vec<Value>,
-    ) -> usize {
-        let (..) = (ctx, code, node, params, stack);
-        unreachable!();
-    }
+#[derive(Debug, Clone, Copy)]
+pub enum Exec {
+    Default(
+        fn(
+            ctx: &mut Context,
+            code: &Code,
+            stack: &mut Vec<Value>,
+            param_base: usize,
+        ) -> usize,
+    ),
+    Manual(
+        fn(
+            ctx: &mut Context,
+            code: &Code,
+            node: usize,
+            params: &[ParameterIndexes],
+            stack: &mut Vec<Value>,
+        ) -> usize,
+    ),
 }
 
 #[derive(Debug, Clone)]
@@ -85,12 +103,12 @@ pub enum Node {
         parameters: Box<[ParameterIndexes]>,
         next: Box<[Box<[FlowIndexes]>]>,
 
-        exec: Arc<dyn Exec>,
+        exec: Exec,
     },
     Operation {
         parameters: Box<[ParameterIndexes]>,
 
-        exec: Arc<dyn Exec>,
+        exec: Exec,
     },
 }
 
@@ -201,19 +219,22 @@ impl Context {
                     let mut stack = self.pool_value.get();
                     COUNT.fetch_add(1, atomic::Ordering::SeqCst);
 
-                    let branch_idx = if exec.manual_param() {
-                        exec.exec_manual(
-                            self, code, idx, parameters, &mut stack,
-                        )
-                    } else {
-                        self.query_params(code, parameters, &mut stack);
+                    let branch_idx = match exec {
+                        Exec::Default(exec) => {
+                            self.query_params(
+                                code, parameters, &mut stack,
+                            );
 
-                        let log_begin = self.log_begin(&stack);
-                        let branch_idx =
-                            exec.exec(self, code, &mut stack, 0);
-                        self.log_end(log_begin, idx, &stack);
+                            let log_begin = self.log_begin(&stack);
+                            let branch_idx =
+                                exec(self, code, &mut stack, 0);
+                            self.log_end(log_begin, idx, &stack);
 
-                        branch_idx
+                            branch_idx
+                        }
+                        Exec::Manual(exec) => {
+                            exec(self, code, idx, parameters, &mut stack)
+                        }
                     };
 
                     if let Some(values) = &mut self.values[idx] {
@@ -274,7 +295,12 @@ impl Context {
 
                 COUNT.fetch_add(1, atomic::Ordering::SeqCst);
                 let log_begin = self.log_begin(&params_out[param_base..]);
-                exec.exec(self, code, params_out, param_base);
+                let Exec::Default(exec) = exec else {
+                    unreachable!(
+                        "expect only Default will be marked visited"
+                    );
+                };
+                exec(self, code, params_out, param_base);
                 self.log_end(
                     log_begin,
                     idx.node,
@@ -287,11 +313,21 @@ impl Context {
                 pending.pop();
             } else {
                 match &code[idx.node] {
-                    Node::Operation { parameters, exec } => {
-                        if exec.manual_param() {
+                    Node::Operation { parameters, exec } => match exec {
+                        Exec::Default(_) => {
+                            *visited = true;
+                            pending.extend(
+                                parameters
+                                    .iter()
+                                    .rev()
+                                    .copied()
+                                    .map(PendingParam::from),
+                            );
+                        }
+                        Exec::Manual(exec) => {
                             let output_base = params_out.len();
 
-                            exec.exec_manual(
+                            exec(
                                 self, code, idx.node, parameters,
                                 params_out,
                             );
@@ -303,17 +339,8 @@ impl Context {
                             params_out.truncate(output_base + 1);
 
                             pending.pop();
-                        } else {
-                            *visited = true;
-                            pending.extend(
-                                parameters
-                                    .iter()
-                                    .rev()
-                                    .copied()
-                                    .map(PendingParam::from),
-                            );
                         }
-                    }
+                    },
 
                     Node::Constant { values } => {
                         let v = values[idx.value].clone();

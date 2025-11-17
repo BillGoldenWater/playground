@@ -1,35 +1,11 @@
 use std::{cell::RefCell, rc::Rc};
 
-use crate::{
-    Code, Context, Exec, LogBegin, Node, ParameterIndexes, Value,
-};
+use crate::{Exec, LogBegin, Node, Value};
 
-#[derive(Debug)]
-pub struct Noop;
+pub const NOOP: Exec = Exec::Default(|_, _, _, _| 0);
 
-impl Exec for Noop {
-    fn exec(
-        &self,
-        _ctx: &mut Context,
-        _code: &Code,
-        _stack: &mut Vec<Value>,
-        _param_base: usize,
-    ) -> usize {
-        0
-    }
-}
-
-#[derive(Debug)]
-pub struct LocalVariable;
-
-impl Exec for LocalVariable {
-    fn exec(
-        &self,
-        ctx: &mut Context,
-        _code: &Code,
-        stack: &mut Vec<Value>,
-        param_base: usize,
-    ) -> usize {
+pub const LOCAL_VARIABLE_DEF: Exec =
+    Exec::Default(|ctx, _code, stack, param_base| {
         let param_len = stack.len() - param_base;
         debug_assert!((1..=2).contains(&param_len));
 
@@ -53,20 +29,10 @@ impl Exec for LocalVariable {
         }
 
         0
-    }
+    });
 
-    fn manual_param(&self) -> bool {
-        true
-    }
-
-    fn exec_manual(
-        &self,
-        ctx: &mut Context,
-        code: &Code,
-        node: usize,
-        params: &[ParameterIndexes],
-        stack: &mut Vec<Value>,
-    ) -> usize {
+pub const LOCAL_VARIABLE: Exec =
+    Exec::Manual(|ctx, code, node, params, stack| {
         debug_assert!((1..=2).contains(&params.len()));
 
         let param_base = stack.len();
@@ -106,20 +72,10 @@ impl Exec for LocalVariable {
         }
 
         0
-    }
-}
+    });
 
-#[derive(Debug)]
-pub struct LocalVariableSet;
-
-impl Exec for LocalVariableSet {
-    fn exec(
-        &self,
-        ctx: &mut Context,
-        _code: &Code,
-        stack: &mut Vec<Value>,
-        param_base: usize,
-    ) -> usize {
+pub const LOCAL_VARIABLE_SET: Exec =
+    Exec::Default(|ctx, _code, stack, param_base| {
         debug_assert_eq!(stack.len() - param_base, 2);
 
         let value = stack.pop().expect("expect 2 parameters");
@@ -130,39 +86,19 @@ impl Exec for LocalVariableSet {
         *var = value;
 
         0
-    }
-}
+    });
 
-#[derive(Debug)]
-pub struct ListAssemble;
-
-impl Exec for ListAssemble {
-    fn exec(
-        &self,
-        _ctx: &mut Context,
-        _code: &Code,
-        stack: &mut Vec<Value>,
-        param_base: usize,
-    ) -> usize {
+pub const LIST_ASSEMBLE: Exec =
+    Exec::Default(|_ctx, _code, stack, param_base| {
         let list = stack[param_base..].to_vec();
         stack.truncate(param_base);
         stack.push(Value::List(Rc::new(RefCell::new(list))));
 
         0
-    }
-}
+    });
 
-#[derive(Debug)]
-pub struct ListGet;
-
-impl Exec for ListGet {
-    fn exec(
-        &self,
-        _ctx: &mut Context,
-        _code: &Code,
-        stack: &mut Vec<Value>,
-        param_base: usize,
-    ) -> usize {
+pub const LIST_GET: Exec =
+    Exec::Default(|_ctx, _code, stack, param_base| {
         debug_assert_eq!(stack.len() - param_base, 2);
 
         let idx = stack.pop().expect("expect 2 parameters");
@@ -174,20 +110,10 @@ impl Exec for ListGet {
         stack.push(value);
 
         0
-    }
-}
+    });
 
-#[derive(Debug)]
-pub struct ListSet;
-
-impl Exec for ListSet {
-    fn exec(
-        &self,
-        _ctx: &mut Context,
-        _code: &Code,
-        stack: &mut Vec<Value>,
-        param_base: usize,
-    ) -> usize {
+pub const LIST_SET: Exec =
+    Exec::Default(|_ctx, _code, stack, param_base| {
         debug_assert_eq!(stack.len() - param_base, 3);
 
         let value = stack.pop().expect("expect 3 parameters");
@@ -197,40 +123,20 @@ impl Exec for ListSet {
         list.as_list().borrow_mut()[idx.as_int() as usize] = value;
 
         0
-    }
-}
+    });
 
-#[derive(Debug)]
-pub struct ListLength;
-
-impl Exec for ListLength {
-    fn exec(
-        &self,
-        _ctx: &mut Context,
-        _code: &Code,
-        stack: &mut Vec<Value>,
-        param_base: usize,
-    ) -> usize {
+pub const LIST_LENGTH: Exec =
+    Exec::Default(|_ctx, _code, stack, param_base| {
         debug_assert_eq!(stack.len() - param_base, 1);
 
         let list = stack.pop().expect("expect 1 parameter");
         stack.push(Value::Int(list.as_list().borrow().len() as i64));
 
         0
-    }
-}
+    });
 
-#[derive(Debug)]
-pub struct Addition;
-
-impl Exec for Addition {
-    fn exec(
-        &self,
-        _ctx: &mut Context,
-        _code: &Code,
-        stack: &mut Vec<Value>,
-        param_base: usize,
-    ) -> usize {
+pub const ADDITION: Exec =
+    Exec::Default(|_ctx, _code, stack, param_base| {
         debug_assert_eq!(stack.len() - param_base, 2);
 
         let b = stack.pop().expect("expect 2 parameters");
@@ -238,20 +144,10 @@ impl Exec for Addition {
         stack.push(Value::Int(a.as_int() + b.as_int()));
 
         0
-    }
-}
+    });
 
-#[derive(Debug)]
-pub struct Subtraction;
-
-impl Exec for Subtraction {
-    fn exec(
-        &self,
-        _ctx: &mut Context,
-        _code: &Code,
-        stack: &mut Vec<Value>,
-        param_base: usize,
-    ) -> usize {
+pub const SUBTRACTION: Exec =
+    Exec::Default(|_ctx, _code, stack, param_base| {
         debug_assert_eq!(stack.len() - param_base, 2);
 
         let b = stack.pop().expect("expect 2 parameters");
@@ -259,20 +155,10 @@ impl Exec for Subtraction {
         stack.push(Value::Int(a.as_int() - b.as_int()));
 
         0
-    }
-}
+    });
 
-#[derive(Debug)]
-pub struct IsGreaterThan;
-
-impl Exec for IsGreaterThan {
-    fn exec(
-        &self,
-        _ctx: &mut Context,
-        _code: &Code,
-        stack: &mut Vec<Value>,
-        param_base: usize,
-    ) -> usize {
+pub const IS_GREATER_THAN: Exec =
+    Exec::Default(|_ctx, _code, stack, param_base| {
         debug_assert_eq!(stack.len() - param_base, 2);
 
         let b = stack.pop().expect("expect 2 parameters");
@@ -280,20 +166,10 @@ impl Exec for IsGreaterThan {
         stack.push(Value::Bool(a.as_int() > b.as_int()));
 
         0
-    }
-}
+    });
 
-#[derive(Debug)]
-pub struct IsLessThan;
-
-impl Exec for IsLessThan {
-    fn exec(
-        &self,
-        _ctx: &mut Context,
-        _code: &Code,
-        stack: &mut Vec<Value>,
-        param_base: usize,
-    ) -> usize {
+pub const IS_LESS_THAN: Exec =
+    Exec::Default(|_ctx, _code, stack, param_base| {
         debug_assert_eq!(stack.len() - param_base, 2);
 
         let b = stack.pop().expect("expect 2 parameters");
@@ -301,73 +177,28 @@ impl Exec for IsLessThan {
         stack.push(Value::Bool(a.as_int() < b.as_int()));
 
         0
-    }
-}
+    });
 
-#[derive(Debug)]
-pub struct Print;
-
-impl Exec for Print {
-    fn exec(
-        &self,
-        _ctx: &mut Context,
-        _code: &Code,
-        stack: &mut Vec<Value>,
-        param_base: usize,
-    ) -> usize {
+pub const PRINT_STRING: Exec =
+    Exec::Default(|_ctx, _code, stack, param_base| {
         debug_assert_eq!(stack.len() - param_base, 1);
 
         println!("{}", stack.pop().expect("expect 1 parameter").as_str());
 
         0
-    }
-}
+    });
 
-#[derive(Debug)]
-pub struct DoubleBranch;
-
-impl Exec for DoubleBranch {
-    fn exec(
-        &self,
-        _ctx: &mut Context,
-        _code: &Code,
-        stack: &mut Vec<Value>,
-        param_base: usize,
-    ) -> usize {
+pub const DOUBLE_BRANCH: Exec =
+    Exec::Default(|_ctx, _code, stack, param_base| {
         debug_assert_eq!(stack.len() - param_base, 1);
 
         let a = stack.pop().expect("expect 1 parameter");
 
         if a.as_bool() { 0 } else { 1 }
-    }
-}
+    });
 
-#[derive(Debug)]
-pub struct FiniteLoop;
-
-impl Exec for FiniteLoop {
-    fn exec(
-        &self,
-        _ctx: &mut Context,
-        _code: &Code,
-        _stack: &mut Vec<Value>,
-        _param_base: usize,
-    ) -> usize {
-        unreachable!()
-    }
-
-    fn manual_param(&self) -> bool {
-        true
-    }
-
-    fn exec_manual(
-        &self,
-        ctx: &mut Context,
-        code: &Code,
-        node: usize,
-        params: &[ParameterIndexes],
-        stack: &mut Vec<Value>,
-    ) -> usize {
+pub const FINITE_LOOP: Exec =
+    Exec::Manual(|ctx, code, node, params, stack| {
         debug_assert_eq!(params.len(), 2);
         let param_base = stack.len();
         ctx.query_params(code, params, stack);
@@ -416,23 +247,12 @@ impl Exec for FiniteLoop {
         ctx.log_end(log_begin, node, &stack[param_base..]);
 
         1
-    }
-}
+    });
 
-#[derive(Debug)]
-pub struct BreakLoop;
-
-impl Exec for BreakLoop {
-    fn exec(
-        &self,
-        ctx: &mut Context,
-        _code: &Code,
-        stack: &mut Vec<Value>,
-        _param_base: usize,
-    ) -> usize {
+pub const BREAK_LOOP: Exec =
+    Exec::Default(|ctx, _code, stack, _param_base| {
         let loop_id = stack.pop().expect("expect 1 parameter");
         ctx.loop_break(loop_id.as_loop_id());
 
         0
-    }
-}
+    });
