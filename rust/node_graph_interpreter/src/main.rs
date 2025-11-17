@@ -168,12 +168,14 @@ fn main() -> anyhow::Result<()> {
     let nodes = core::hint::black_box(nodes);
     let code = Code { nodes };
 
+    let mut ctx = Context {
+        logger: Some(Logger::default()),
+        ..Context::default()
+    };
+    ctx.run_start(&code, 1, [].into());
+    let node_run_count = ctx.logger.as_mut().unwrap().logs.len();
+
     let Some(arg) = args().nth(1) else {
-        let mut ctx = Context {
-            logger: Some(Logger::default()),
-            ..Context::default()
-        };
-        ctx.run_start(&code, 1, [].into());
         ctx.logger.as_mut().unwrap().print_per_node(&code);
         return Ok(());
     };
@@ -194,6 +196,7 @@ fn main() -> anyhow::Result<()> {
         count += 1;
     }
     println!("avg: {:?}, run count: {count}", cost_sum / count);
+    println!("node run count: {node_run_count}");
     println!("{:?}", ctx.local_variables[0]);
 
     Ok(())
