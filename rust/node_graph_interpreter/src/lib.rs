@@ -3,7 +3,6 @@ use std::{
     fmt::Debug,
     hash::Hash,
     ops::Index,
-    sync::atomic::{self, AtomicU32},
     time::{Duration, Instant},
 };
 
@@ -12,8 +11,6 @@ use crate::{
     value::Value,
     vec_pool::VecPool,
 };
-
-pub static COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub mod logger;
 pub mod nodes;
@@ -217,7 +214,6 @@ impl Context {
                     next,
                 } => {
                     let mut stack = self.pool_value.get();
-                    COUNT.fetch_add(1, atomic::Ordering::SeqCst);
 
                     let branch_idx = match exec {
                         Exec::Default(exec) => {
@@ -293,7 +289,6 @@ impl Context {
 
                 let param_base = params_out.len() - parameters.len();
 
-                COUNT.fetch_add(1, atomic::Ordering::SeqCst);
                 let log_begin = self.log_begin(&params_out[param_base..]);
                 let Exec::Default(exec) = exec else {
                     unreachable!(

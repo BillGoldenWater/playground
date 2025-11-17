@@ -23,14 +23,15 @@ impl Logger {
         #[derive(Debug, Clone)]
         struct RecordPerNodeWorking<'log> {
             total_duration: Duration,
-            runs: Vec<RunParametersAndOutputs<'log>>,
+            runs: Vec<RunInfo<'log>>,
         }
 
         let mut result =
             vec![Option::<RecordPerNodeWorking>::None; code.nodes.len()];
 
         for rec in &self.logs {
-            let run = RunParametersAndOutputs {
+            let run = RunInfo {
+                duration: rec.duration,
                 parameters: &rec.parameters,
                 outputs: &rec.outputs,
             };
@@ -59,6 +60,7 @@ impl Logger {
     pub fn print_per_node(&self, code: &Code) {
         let per_node = self.to_per_node(code);
         let len = per_node.len();
+        println!("total node run count {}", self.logs.len());
         for (idx, node) in per_node.into_iter().enumerate() {
             println!("node {idx}:");
             let node = if let Some(node) = node {
@@ -71,6 +73,7 @@ impl Logger {
             println!("  run_count: {}", node.runs.len());
             for (idx, run) in node.runs.into_iter().enumerate() {
                 println!("  run {idx}:");
+                println!("    dur: {:?}", run.duration);
                 if !run.parameters.is_empty() {
                     if run.parameters.len() > 1 {
                         println!("    in:");
@@ -102,11 +105,12 @@ impl Logger {
 #[derive(Debug)]
 pub struct RecordPerNode<'log> {
     pub total_duration: Duration,
-    pub runs: Box<[RunParametersAndOutputs<'log>]>,
+    pub runs: Box<[RunInfo<'log>]>,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct RunParametersAndOutputs<'log> {
+pub struct RunInfo<'log> {
+    pub duration: Duration,
     pub parameters: &'log [ValueSnapshot],
     pub outputs: &'log [ValueSnapshot],
 }

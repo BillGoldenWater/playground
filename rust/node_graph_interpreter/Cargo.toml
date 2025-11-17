@@ -3,6 +3,10 @@ name = "node_graph_interpreter"
 version = "0.1.0"
 edition = "2024"
 
+[[bench]]
+name = "benchmark"
+harness = false
+
 [dependencies]
 anyhow = "1.0.100"
 dotenvy = "0.15.7"
@@ -11,4 +15,7 @@ tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 
 [profile.release]
 debug = "full"
+
+[dev-dependencies]
+criterion = { version = "0.7.0", features = ["html_reports"] }
 # lto = "fat"

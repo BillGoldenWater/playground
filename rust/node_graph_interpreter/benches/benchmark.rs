@@ -1,9 +1,6 @@
-use std::{
-    env::args,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
 
-use anyhow::Context as _;
+use criterion::{Criterion, criterion_group, criterion_main};
 use node_graph_interpreter::{
     Code, Context, FlowIndexes, Node, ParameterIndexes,
     logger::Logger,
@@ -14,20 +11,75 @@ use node_graph_interpreter::{
     },
     value::Value,
 };
-use tracing_subscriber::EnvFilter;
 
-fn main() -> anyhow::Result<()> {
-    dotenvy::dotenv().ok();
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env())
-        .init();
+fn bubble_sort(c: &mut Criterion) {
+    let nodes = nodes();
+    let nodes = core::hint::black_box(&nodes);
+    let code = Code { nodes };
 
+    let mut ctx = Context::default();
+
+    let mut group = c.benchmark_group("bubble_sort/node_graph");
+
+    group.bench_function("normal", |b| {
+        b.iter(|| {
+            ctx.run_start(&code, 1, [].into());
+            std::hint::black_box(&ctx);
+        })
+    });
+
+    ctx.logger = Some(Logger::default());
+    group.bench_function("logged", |b| {
+        b.iter_custom(|iters| {
+            let mut dur = Duration::default();
+            for _ in 0..iters {
+                ctx.logger.as_mut().unwrap().clear();
+                let start = Instant::now();
+                ctx.run_start(&code, 1, [].into());
+                std::hint::black_box(&ctx);
+                dur += start.elapsed();
+            }
+            dur
+        })
+    });
+    group.finish();
+
+    let mut group = c.benchmark_group("bubble_sort");
+    group.bench_function("naive", |b| {
+        b.iter(|| {
+            let mut arr = std::hint::black_box(vec![2, 1, 4, 6, 0]);
+            for _ in 0..arr.len() {
+                for i in 0..arr.len() - 1 {
+                    if arr[i] > arr[i + 1] {
+                        arr.swap(i, i + 1);
+                    }
+                }
+            }
+            arr
+        })
+    });
+
+    group.bench_function("std", |b| {
+        b.iter(|| {
+            let mut arr = std::hint::black_box(vec![2, 1, 4, 6, 0]);
+            arr.sort();
+            arr
+        })
+    });
+
+    group.finish();
+}
+
+criterion_group!(benches, bubble_sort);
+criterion_main!(benches);
+
+fn nodes() -> Box<[Node]> {
     let constant = |value| ParameterIndexes { node: 0, value };
     let param_n = |node, value| ParameterIndexes { node, value };
     let param = |node| param_n(node, 0);
     let flow = |node| FlowIndexes { node };
 
-    let nodes = &[
+    [
         // 0
         Node::Constant {
             values: [
@@ -161,40 +213,6 @@ fn main() -> anyhow::Result<()> {
             next: [[].into()].into(),
             exec: LIST_SET,
         },
-    ];
-
-    // avoid any possible compile time optimization
-    // for this specific nodes combination
-    let nodes = core::hint::black_box(nodes);
-    let code = Code { nodes };
-
-    let Some(arg) = args().nth(1) else {
-        let mut ctx = Context {
-            logger: Some(Logger::default()),
-            ..Context::default()
-        };
-        ctx.run_start(&code, 1, [].into());
-        ctx.logger.as_mut().unwrap().print_per_node(&code);
-        return Ok(());
-    };
-
-    let dur = arg.parse::<f64>().context("parsing arg")?;
-
-    let mut ctx = Context::default();
-
-    let mut count = 0;
-    let mut cost_sum = Duration::default();
-    while cost_sum.as_secs_f64() < dur {
-        let start = Instant::now();
-
-        ctx.run_start(&code, 1, [].into());
-
-        let dur = start.elapsed();
-        cost_sum += dur;
-        count += 1;
-    }
-    println!("avg: {:?}, run count: {count}", cost_sum / count);
-    println!("{:?}", ctx.local_variables[0]);
-
-    Ok(())
+    ]
+    .into()
 }
