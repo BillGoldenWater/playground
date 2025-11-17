@@ -44,8 +44,7 @@ fn bubble_sort(c: &mut Criterion) {
     });
     group.finish();
 
-    let mut group = c.benchmark_group("bubble_sort");
-    group.bench_function("naive", |b| {
+    c.bench_function("bubble_sort_naive", |b| {
         b.iter(|| {
             let mut arr = std::hint::black_box(vec![2, 1, 4, 6, 0]);
             for _ in 0..arr.len() {
@@ -59,15 +58,13 @@ fn bubble_sort(c: &mut Criterion) {
         })
     });
 
-    group.bench_function("std", |b| {
+    c.bench_function("std_sort", |b| {
         b.iter(|| {
             let mut arr = std::hint::black_box(vec![2, 1, 4, 6, 0]);
             arr.sort();
             arr
         })
     });
-
-    group.finish();
 }
 
 criterion_group!(benches, bubble_sort);
