@@ -28,42 +28,6 @@ pub struct FlowIndexes {
     pub node: usize,
 }
 
-// pub trait Exec: Debug {
-//     /// `param_base` points to the first parameter in stack,
-//     /// equal to stack.len() if empty parameter
-//     ///
-//     /// implementation need to consume all the parameter,
-//     /// then push output
-//     /// # Returns
-//     /// next branch index, ignored in non exec node
-//     fn exec(
-//         &self,
-//         ctx: &mut Context,
-//         code: &Code,
-//         stack: &mut Vec<Value>,
-//         param_base: usize,
-//     ) -> usize;
-//
-//     fn manual_param(&self) -> bool {
-//         false
-//     }
-//
-//     /// fetch parameters and logging manually
-//     /// # Returns
-//     /// next branch index, ignored in non exec node
-//     fn exec_manual(
-//         &self,
-//         ctx: &mut Context,
-//         code: &Code,
-//         node: usize,
-//         params: &[ParameterIndexes],
-//         stack: &mut Vec<Value>,
-//     ) -> usize {
-//         let (..) = (ctx, code, node, params, stack);
-//         unreachable!();
-//     }
-// }
-
 #[derive(Debug, Clone, Copy)]
 pub enum Exec {
     Default(
@@ -275,8 +239,9 @@ impl Context {
         params_out: &mut Vec<Value>,
     ) {
         let mut pending = self.pool_pending_param.get();
-        pending
-            .extend(params.iter().rev().copied().map(PendingParam::from));
+        for it in params.iter().rev() {
+            pending.push(PendingParam::from(*it));
+        }
 
         while let Some(PendingParam { idx, visited }) = pending.last_mut()
         {
@@ -311,13 +276,9 @@ impl Context {
                     Node::Operation { parameters, exec } => match exec {
                         Exec::Default(_) => {
                             *visited = true;
-                            pending.extend(
-                                parameters
-                                    .iter()
-                                    .rev()
-                                    .copied()
-                                    .map(PendingParam::from),
-                            );
+                            for it in parameters.iter().rev() {
+                                pending.push(PendingParam::from(*it));
+                            }
                         }
                         Exec::Manual(exec) => {
                             let output_base = params_out.len();
