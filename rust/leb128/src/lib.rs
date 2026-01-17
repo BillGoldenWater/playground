@@ -6,12 +6,102 @@ pub enum Error {
 
 pub type Result<T> = core::result::Result<T, Error>;
 
-pub fn encode(mut value: u128, output: &mut Vec<u8>) {
-    loop {
-        let byte = value as u8 & 0x7F;
-        value >>= 7;
+pub trait NumUnsigned {
+    const BITS: u32;
 
-        if value == 0 {
+    fn from_u8(value: u8) -> Self;
+
+    fn trunc_u8(&self) -> u8;
+    fn all_zero(&self) -> bool;
+    fn all_one(&self) -> bool;
+    fn shr_assign(&mut self, rhs: u32);
+    fn sar_assign(&mut self, rhs: u32);
+    fn shifted_or_assign(&mut self, rhs: u8, shift: u32);
+}
+
+pub trait NumSigned {
+    type UnsignedVariant: NumUnsigned;
+
+    fn as_unsigned(&self) -> Self::UnsignedVariant;
+    fn from_unsigned(value: Self::UnsignedVariant) -> Self;
+    fn one_fill_left(&mut self, right: u32);
+}
+
+macro_rules! impl_num {
+    ($ty:ty, $signed_ty:ty) => {
+        impl NumUnsigned for $ty {
+            const BITS: u32 = <$ty>::BITS;
+
+            #[inline]
+            fn from_u8(value: u8) -> $ty {
+                value as $ty
+            }
+
+            #[inline]
+            fn trunc_u8(&self) -> u8 {
+                *self as u8
+            }
+
+            #[inline]
+            fn all_zero(&self) -> bool {
+                *self == 0
+            }
+
+            #[inline]
+            fn all_one(&self) -> bool {
+                *self == <$ty>::MAX
+            }
+
+            #[inline]
+            fn shr_assign(&mut self, rhs: u32) {
+                *self >>= rhs;
+            }
+
+            #[inline]
+            fn sar_assign(&mut self, rhs: u32) {
+                *self = ((*self as $signed_ty) >> rhs) as $ty;
+            }
+
+            #[inline]
+            fn shifted_or_assign(&mut self, rhs: u8, shift: u32) {
+                *self |= (rhs as $ty) << shift;
+            }
+        }
+
+        impl NumSigned for $signed_ty {
+            type UnsignedVariant = $ty;
+
+            #[inline]
+            fn as_unsigned(&self) -> Self::UnsignedVariant {
+                *self as Self::UnsignedVariant
+            }
+
+            #[inline]
+            fn from_unsigned(value: Self::UnsignedVariant) -> Self {
+                value as $signed_ty
+            }
+
+            #[inline]
+            fn one_fill_left(&mut self, right: u32) {
+                *self = (*self as $ty | <$ty>::MAX.wrapping_shl(right))
+                    as $signed_ty;
+            }
+        }
+    };
+}
+
+impl_num!(u128, i128);
+impl_num!(u64, i64);
+impl_num!(u32, i32);
+impl_num!(u16, i16);
+impl_num!(u8, i8);
+
+pub fn encode(mut value: impl NumUnsigned, output: &mut Vec<u8>) {
+    loop {
+        let byte = value.trunc_u8() & 0x7F;
+        value.shr_assign(7);
+
+        if value.all_zero() {
             output.push(byte);
             break;
         } else {
@@ -20,14 +110,14 @@ pub fn encode(mut value: u128, output: &mut Vec<u8>) {
     }
 }
 
-pub fn decode(data: &[u8]) -> Result<u128> {
-    let mut res = 0;
+pub fn decode<T: NumUnsigned>(data: &[u8]) -> Result<T> {
+    let mut res = T::from_u8(0);
     let mut shift = 0;
     let mut data = data.iter().copied();
     let mut byte = data.next().ok_or(Error::EndOfData)?;
 
     loop {
-        res |= ((byte & 0x7F) as u128) << shift;
+        res.shifted_or_assign(byte & 0x7F, shift);
         shift += 7;
 
         if byte & 0x80 == 0 {
@@ -44,13 +134,16 @@ pub fn decode(data: &[u8]) -> Result<u128> {
     Ok(res)
 }
 
-pub fn encode_signed(mut value: i128, output: &mut Vec<u8>) {
+pub fn encode_signed(value: impl NumSigned, output: &mut Vec<u8>) {
+    let mut value = value.as_unsigned();
     loop {
-        let byte = value as u8 & 0x7F;
-        value >>= 7;
+        let byte = value.trunc_u8() & 0x7F;
+        value.sar_assign(7);
 
         let sign = byte & 0x40;
-        if (value == 0 && sign == 0) || (value == -1 && sign != 0) {
+        if (value.all_zero() && sign == 0)
+            || (value.all_one() && sign != 0)
+        {
             output.push(byte);
             break;
         } else {
@@ -59,14 +152,14 @@ pub fn encode_signed(mut value: i128, output: &mut Vec<u8>) {
     }
 }
 
-pub fn decode_signed(data: &[u8]) -> Result<i128> {
-    let mut res = 0;
+pub fn decode_signed<T: NumSigned>(data: &[u8]) -> Result<T> {
+    let mut res = T::UnsignedVariant::from_u8(0);
     let mut shift = 0;
     let mut data = data.iter().copied();
     let mut byte = data.next().ok_or(Error::EndOfData)?;
 
     loop {
-        res |= ((byte & 0x7F) as u128) << shift;
+        res.shifted_or_assign(byte & 0x7F, shift);
         shift += 7;
 
         if byte & 0x80 == 0 {
@@ -80,11 +173,13 @@ pub fn decode_signed(data: &[u8]) -> Result<i128> {
         byte = data.next().ok_or(Error::EndOfData)?;
     }
 
-    if shift < u128::BITS && byte & 0x40 != 0 {
-        res |= u128::MAX.wrapping_shl(shift);
+    let mut res = T::from_unsigned(res);
+
+    if shift < T::UnsignedVariant::BITS && byte & 0x40 != 0 {
+        res.one_fill_left(shift);
     }
 
-    Ok(res as i128)
+    Ok(res)
 }
 
 #[cfg(test)]
@@ -159,7 +254,7 @@ mod tests {
     fn uleb128_fuzzy() {
         let mut output = Vec::<u8>::new();
         for idx in 0..=1_000_000 {
-            let v = rng().random();
+            let v: u128 = rng().random();
 
             output.clear();
 
@@ -246,7 +341,7 @@ mod tests {
     fn sleb128_fuzzy() {
         let mut output = Vec::<u8>::new();
         for idx in 0..=1_000_000 {
-            let v = rng().random();
+            let v: i128 = rng().random();
 
             output.clear();
 
