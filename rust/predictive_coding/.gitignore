@@ -1,0 +1,3 @@
+/mnist/*
+/network_*_*.json
+/log.csv
