@@ -1,3 +1,6 @@
 /mnist/*
 /network_*_*.json
+/network_*_*.json.zst
 /log.csv
+/log.csv.zst
+/.env
