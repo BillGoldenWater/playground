@@ -7,8 +7,10 @@ use std::{
 mod scratch_pad;
 
 use predictive_coding::{
-    Fp, Network, RunData, RunFlags, idx_data::IdxData, mnist::Mnist,
-    utils::bin_init_env,
+    Fp, Network, RunData, RunFlags,
+    idx_data::IdxData,
+    mnist::Mnist,
+    utils::{bin_init_env, open_file_for_write},
 };
 use rayon::iter::{ParallelBridge as _, ParallelIterator as _};
 
@@ -55,12 +57,7 @@ fn main() {
 }
 
 fn run_train(use_checkpoint: usize, save_every: usize) {
-    let mut log = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open("./log.csv")
-        .unwrap();
+    let mut log = open_file_for_write("outputs/mnist/log.csv");
 
     let mnist = Mnist::new(
         "./mnist/train-labels-idx1-ubyte",
@@ -68,14 +65,13 @@ fn run_train(use_checkpoint: usize, save_every: usize) {
     );
 
     let mut network = if use_checkpoint > 1 {
-        let v = std::fs::read(format!(
+        Network::load(format!(
             "./network_{use_checkpoint}_{}.json",
             use_checkpoint / mnist.len()
         ))
-        .unwrap();
-        serde_json::from_slice(&v).unwrap()
+        .unwrap()
     } else {
-        Network::new(0.01, 0.0001, 1., 1., &[10, 64, 128, 784])
+        Network::new(0.01, 0.0001, 1., 1., false, &[10, 64, 128, 784])
     };
 
     let mut mnist_iter = mnist.iter().cycle().skip(use_checkpoint);
@@ -102,20 +98,17 @@ fn run_train(use_checkpoint: usize, save_every: usize) {
         writeln!(&mut log, "{epoch},{data_count},{e}").unwrap();
         tracing::info!(
             "{epoch: >5} {data_count: >16} {lr: >12.8} {e: >23.20}",
-            lr = network.learn_rate()
+            lr = network.learn_rate
         );
 
         if data_count.is_multiple_of(save_every) {
             tracing::info!("save");
-            *network.learn_rate_mut() *= 0.998;
+            network.learn_rate *= 0.998;
             let mut network = network.clone();
             network.reset();
-            let network = serde_json::to_string(&network).unwrap();
-            std::fs::write(
-                format!("./network_{data_count}_{epoch}.json"),
-                network,
-            )
-            .unwrap();
+            network
+                .save(format!("./network_{data_count}_{epoch}.json"))
+                .unwrap();
         }
 
         cur = mnist_iter.next().unwrap();

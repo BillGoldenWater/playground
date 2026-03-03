@@ -73,7 +73,7 @@ pub struct IdxData<T> {
 impl<T> IdxData<T> {
     pub fn new(dimensions: Box<[usize]>, data: Vec<T>) -> Self {
         assert!(!dimensions.is_empty());
-        assert_eq!(data.len(), dimensions.iter().product());
+        assert_eq!(data.len(), dimensions.iter().product::<usize>());
         Self { dimensions, data }
     }
 
@@ -217,13 +217,31 @@ impl IdxData<Fp> {
                 .collect(),
         }
     }
+
+    pub fn to_u8_normalize_trunc_neg(&self) -> IdxData<u8> {
+        let mut mm = MinMaxTracker::new(0.);
+        self.data.iter().for_each(|&it| mm.update(it));
+
+        IdxData {
+            dimensions: self.dimensions.clone(),
+            data: self
+                .data
+                .iter()
+                .map(|&it| {
+                    let mut it = it / mm.max();
+                    it *= 255.;
+                    it as u8
+                })
+                .collect(),
+        }
+    }
 }
 
 impl From<&IdxData<u8>> for IdxData<Fp> {
     fn from(value: &IdxData<u8>) -> Self {
         Self {
             dimensions: value.dimensions.clone(),
-            data: value.data.iter().map(|&it| it as f64 / 255.).collect(),
+            data: value.data.iter().map(|&it| it as Fp / 255.).collect(),
         }
     }
 }
@@ -250,7 +268,7 @@ pub struct IdxEntry<'idx, T> {
 impl<'idx, T> IdxEntry<'idx, T> {
     pub fn new(dimensions: &'idx [usize], data: &'idx [T]) -> Self {
         assert!(!dimensions.is_empty());
-        assert_eq!(data.len(), dimensions.iter().product());
+        assert_eq!(data.len(), dimensions.iter().product::<usize>());
         Self { dimensions, data }
     }
 

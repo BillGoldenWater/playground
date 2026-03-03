@@ -1,4 +1,4 @@
-log_data = csvread("log.csv");
+log_data = csvread(argv(){1});
 
 % col = log_data(:, 3);
 log_error = log_data(10:end, 3);
@@ -14,4 +14,5 @@ plot(mean, "LineWidth", 2);
 % plot(stddev_mean * 5, "LineWidth", 2);
 hold off;
 
+drawnow;
 waitfor(gcf);

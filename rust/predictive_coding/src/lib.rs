@@ -1,5 +1,11 @@
+use std::{fs, io, path::Path};
+
 use rand::SeedableRng;
 use rand_distr::{Distribution, Normal};
+use rayon::iter::{
+    IndexedParallelIterator as _, IntoParallelRefIterator as _,
+    IntoParallelRefMutIterator as _, ParallelIterator as _,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::min_max_tracker::MinMaxTracker;
@@ -74,10 +80,12 @@ impl Layer {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Network {
-    step_rate: Fp,
-    learn_rate: Fp,
-    activity_decay: Fp,
-    weight_decay: Fp,
+    pub step_rate: Fp,
+    pub learn_rate: Fp,
+    pub activity_decay: Fp,
+    pub weight_decay: Fp,
+    #[serde(default)]
+    pub parallel: bool,
     layers: Box<[Layer]>,
 }
 
@@ -87,6 +95,7 @@ impl Network {
         learn_rate: Fp,
         activity_decay: Fp,
         weight_decay: Fp,
+        parallel: bool,
         layer_sizes: &[usize],
     ) -> Self {
         assert!(!layer_sizes.is_empty());
@@ -110,6 +119,7 @@ impl Network {
             learn_rate,
             activity_decay,
             weight_decay,
+            parallel,
             layers: layers.into_boxed_slice(),
         }
     }
@@ -137,42 +147,77 @@ impl Network {
             let next = &b[0];
             assert!(cur.is_valid_shape());
 
-            cur.activities
-                .iter_mut()
-                .zip(&cur.errors)
-                .zip(&cur.weights_err)
-                .for_each(|((activity, &error), weights_err)| {
-                    let feedback: Fp = weights_err
-                        .iter()
-                        .zip(&next.errors)
-                        .map(|(&weight, &error)| weight * error)
-                        .sum();
-                    *activity += (-error + feedback) * self.step_rate;
-                    *activity *= self.activity_decay;
-                });
+            let each = |((activity, &error), weights_err): (
+                (&mut f64, &f64),
+                &[f64],
+            )| {
+                let feedback: Fp = weights_err
+                    .iter()
+                    .zip(&next.errors)
+                    .map(|(&weight, &error)| weight * error)
+                    .sum();
+                *activity += (-error + feedback) * self.step_rate;
+                *activity *= self.activity_decay;
+            };
+
+            if self.parallel {
+                cur.activities
+                    .par_iter_mut()
+                    .zip_eq(&cur.errors)
+                    .zip_eq(cur.weights_err.par_iter().map(|it| &**it))
+                    .for_each(each);
+            } else {
+                cur.activities
+                    .iter_mut()
+                    .zip(&cur.errors)
+                    .zip(cur.weights_err.iter().map(|it| &**it))
+                    .for_each(each);
+            }
         }
 
         if !skip_input {
             let last = self.layers.last_mut().unwrap();
             assert!(last.is_valid_shape());
 
-            last.activities.iter_mut().zip(&last.errors).for_each(
-                |(activity, &error)| {
-                    *activity += -error * self.step_rate;
-                    *activity *= self.activity_decay;
-                },
-            );
+            let each = |(activity, &error): (&mut f64, &f64)| {
+                *activity += -error * self.step_rate;
+                *activity *= self.activity_decay;
+            };
+
+            if self.parallel {
+                last.activities
+                    .par_iter_mut()
+                    .zip_eq(&last.errors)
+                    .for_each(each);
+            } else {
+                last.activities
+                    .iter_mut()
+                    .zip(&last.errors)
+                    .for_each(each);
+            }
         }
     }
 
     pub fn update_errors(&mut self, skip_output: bool) {
         if !skip_output {
             let first = self.layers.first_mut().unwrap();
-            first.errors.iter_mut().zip(&first.activities).for_each(
-                |(error, activity)| {
-                    *error = *activity;
-                },
-            );
+            fn each((error, activity): (&mut f64, &f64)) {
+                *error = *activity;
+            }
+
+            if self.parallel {
+                first
+                    .errors
+                    .par_iter_mut()
+                    .zip_eq(&first.activities)
+                    .for_each(each);
+            } else {
+                first
+                    .errors
+                    .iter_mut()
+                    .zip(&first.activities)
+                    .for_each(each);
+            }
         }
 
         for idx in 1..self.layers.len() {
@@ -181,20 +226,33 @@ impl Network {
             let cur = &mut b[0];
             assert!(cur.is_valid_shape());
 
-            cur.errors
-                .iter_mut()
-                .zip(&cur.activities)
-                .zip(&cur.weights_pred)
-                .for_each(|((error, &activity), weights_pred)| {
-                    let prediction: Fp = weights_pred
-                        .iter()
-                        .zip(&prev.activities)
-                        .map(|(&weight, &activity)| {
-                            weight * activation(activity)
-                        })
-                        .sum();
-                    *error = activity - prediction;
-                });
+            let each = |((error, &activity), weights_pred): (
+                (&mut f64, &f64),
+                &[f64],
+            )| {
+                let prediction: Fp = weights_pred
+                    .iter()
+                    .zip(&prev.activities)
+                    .map(|(&weight, &activity)| {
+                        weight * activation(activity)
+                    })
+                    .sum();
+                *error = activity - prediction;
+            };
+
+            if self.parallel {
+                cur.errors
+                    .par_iter_mut()
+                    .zip_eq(&cur.activities)
+                    .zip_eq(cur.weights_pred.par_iter().map(|it| &**it))
+                    .for_each(each);
+            } else {
+                cur.errors
+                    .iter_mut()
+                    .zip(&cur.activities)
+                    .zip(cur.weights_pred.iter().map(|it| &**it))
+                    .for_each(each);
+            }
         }
     }
 
@@ -205,18 +263,30 @@ impl Network {
             let next = &b[0];
             assert!(cur.is_valid_shape());
 
-            cur.weights_err.iter_mut().zip(&cur.activities).for_each(
-                |(weights, &activity)| {
-                    weights.iter_mut().zip(&next.errors).for_each(
-                        |(weight, &error)| {
-                            *weight += activity
-                                * activation(error)
-                                * self.learn_rate;
-                            *weight *= self.weight_decay;
-                        },
-                    );
-                },
-            );
+            let each = |(weights, &activity): (&mut [f64], &f64)| {
+                weights.iter_mut().zip(&next.errors).for_each(
+                    |(weight, &error)| {
+                        *weight += activity
+                            * activation(error)
+                            * self.learn_rate;
+                        *weight *= self.weight_decay;
+                    },
+                );
+            };
+
+            if self.parallel {
+                cur.weights_err
+                    .par_iter_mut()
+                    .map(|it| &mut **it)
+                    .zip_eq(&cur.activities)
+                    .for_each(each);
+            } else {
+                cur.weights_err
+                    .iter_mut()
+                    .map(|it| &mut **it)
+                    .zip(&cur.activities)
+                    .for_each(each);
+            }
         }
 
         for idx in 1..self.layers.len() {
@@ -225,18 +295,30 @@ impl Network {
             let cur = &mut b[0];
             assert!(cur.is_valid_shape());
 
-            cur.weights_pred.iter_mut().zip(&cur.errors).for_each(
-                |(weights, &error)| {
-                    weights.iter_mut().zip(&prev.activities).for_each(
-                        |(weight, &activity)| {
-                            *weight += error
-                                * activation(activity)
-                                * self.learn_rate;
-                            *weight *= self.weight_decay;
-                        },
-                    );
-                },
-            );
+            let each = |(weights, &error): (&mut [f64], &f64)| {
+                weights.iter_mut().zip(&prev.activities).for_each(
+                    |(weight, &activity)| {
+                        *weight += error
+                            * activation(activity)
+                            * self.learn_rate;
+                        *weight *= self.weight_decay;
+                    },
+                );
+            };
+
+            if self.parallel {
+                cur.weights_pred
+                    .par_iter_mut()
+                    .map(|it| &mut **it)
+                    .zip_eq(&cur.errors)
+                    .for_each(each);
+            } else {
+                cur.weights_pred
+                    .iter_mut()
+                    .map(|it| &mut **it)
+                    .zip(&cur.errors)
+                    .for_each(each);
+            }
         }
     }
 
@@ -274,6 +356,7 @@ impl Network {
                 self.output().copy_from_slice(output);
             }
 
+            self.update_errors(err_skip_output);
             self.update_activities(act_skip_input, act_skip_output);
             self.update_errors(err_skip_output);
 
@@ -293,7 +376,7 @@ impl Network {
                 mm_run.reset();
                 mm_weights.update(e);
             }
-            if !e.is_finite() || e > u32::MAX as f64 {
+            if !e.is_finite() || e > u32::MAX as Fp {
                 if upd_weights && explode_cont {
                     tracing::warn!("explode {e:?}");
                     self.reset();
@@ -313,7 +396,7 @@ impl Network {
     pub fn error_sum(&self) -> Fp {
         self.layers
             .iter()
-            .map(|it| it.errors.iter().map(|it| it.powi(2)).sum::<Fp>())
+            .map(|it| it.errors.iter().map(|it| it.abs()).sum::<Fp>())
             .sum::<Fp>()
     }
 
@@ -335,24 +418,14 @@ impl Network {
         }
     }
 
-    pub fn step_rate(&self) -> Fp {
-        self.step_rate
+    pub fn load(path: impl AsRef<Path>) -> io::Result<Self> {
+        let data = fs::read(path)?;
+        Ok(serde_json::from_slice(&data).unwrap())
     }
 
-    pub fn learn_rate(&self) -> Fp {
-        self.learn_rate
-    }
-
-    pub fn learn_rate_mut(&mut self) -> &mut Fp {
-        &mut self.learn_rate
-    }
-
-    pub fn activity_decay(&self) -> Fp {
-        self.activity_decay
-    }
-
-    pub fn weight_decay(&self) -> Fp {
-        self.weight_decay
+    pub fn save(&self, path: impl AsRef<Path>) -> io::Result<()> {
+        let data = serde_json::to_string(self).unwrap();
+        fs::write(path, data)
     }
 
     pub fn layers(&self) -> &[Layer] {
