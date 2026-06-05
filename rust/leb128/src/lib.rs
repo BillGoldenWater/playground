@@ -2,6 +2,7 @@
 pub enum Error<T: NumUnsigned> {
     EndOfData,
     DataTooBig { cur: T, shift: u32, byte: u8 },
+    TrailingEmptyBytes,
 }
 
 pub type Result<T, UT> = core::result::Result<T, Error<UT>>;
@@ -128,11 +129,16 @@ where
         cur.shifted_or_assign(last_byte & 0x7F, shift - 7);
     }
     let mut byte = data.next().ok_or(Error::EndOfData)?;
+    let mut first = true;
 
     loop {
         cur.shifted_or_assign(byte & 0x7F, shift);
 
         if byte & 0x80 == 0 {
+            if byte == 0 && !first {
+                return Err(Error::TrailingEmptyBytes);
+            }
+
             break;
         }
 
@@ -142,6 +148,7 @@ where
         }
 
         byte = data.next().ok_or(Error::EndOfData)?;
+        first = false;
     }
 
     if shift > T::BITS - 7 {
@@ -188,7 +195,7 @@ pub fn decode_signed_resume<T, I>(
     mut data: I,
     mut cur: T::UnsignedVariant,
     mut shift: u32,
-    last_byte: u8,
+    mut last_byte: u8,
 ) -> Result<T, T::UnsignedVariant>
 where
     T: NumSigned,
@@ -204,6 +211,11 @@ where
         cur.shifted_or_assign(byte & 0x7F, shift);
 
         if byte & 0x80 == 0 {
+            let pos = byte == 0 && last_byte & 0x40 == 0;
+            let neg = byte == 0x7F && last_byte & 0x40 != 0;
+            if (pos || neg) && last_byte != 0 {
+                return Err(Error::TrailingEmptyBytes);
+            }
             break;
         }
 
@@ -212,6 +224,7 @@ where
             return Err(Error::DataTooBig { cur, shift, byte });
         }
 
+        last_byte = byte;
         byte = data.next().ok_or(Error::EndOfData)?;
     }
 
@@ -335,6 +348,9 @@ mod tests {
                 byte: 0x80
             })
         );
+
+        let res = decode::<u128>(&[0x80, 0]);
+        assert_matches!(res, Err(Error::TrailingEmptyBytes));
 
         let mut data = vec![];
         test_too_big!(data, u128::MAX, u64);
@@ -461,6 +477,11 @@ mod tests {
                 byte: 0x80
             })
         );
+
+        let res = decode_signed::<i128>(&[0x80, 0]);
+        assert_matches!(res, Err(Error::TrailingEmptyBytes));
+        let res = decode_signed::<i128>(&[0xFF, 0x7F]);
+        assert_matches!(res, Err(Error::TrailingEmptyBytes));
 
         let mut data = vec![];
         test_too_big_signed!(data, i128::MAX, i64);
