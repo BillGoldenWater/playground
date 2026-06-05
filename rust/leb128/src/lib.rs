@@ -129,7 +129,7 @@ where
         cur.shifted_or_assign(last_byte & 0x7F, shift - 7);
     }
     let mut byte = data.next().ok_or(Error::EndOfData)?;
-    let mut first = true;
+    let mut first = last_byte == 0;
 
     loop {
         cur.shifted_or_assign(byte & 0x7F, shift);
@@ -350,6 +350,8 @@ mod tests {
         );
 
         let res = decode::<u128>(&[0x80, 0]);
+        assert_matches!(res, Err(Error::TrailingEmptyBytes));
+        let res = decode_resume::<u128, _>(once(0), 0, 7, 0x80);
         assert_matches!(res, Err(Error::TrailingEmptyBytes));
 
         let mut data = vec![];
