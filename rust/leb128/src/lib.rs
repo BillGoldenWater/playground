@@ -1,15 +1,13 @@
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error<T: NumUnsigned> {
     EndOfData,
-    // NOTE: shift is one iteration ahead,
-    // so the byte is at (`shift` - 7)
     DataTooBig { cur: T, shift: u32, byte: u8 },
     TrailingEmptyBytes,
 }
 
 pub type Result<T, UT> = core::result::Result<T, Error<UT>>;
 
-pub trait NumUnsigned: Clone {
+pub trait NumUnsigned {
     const BITS: u32;
 
     fn from_u8(value: u8) -> Self;
@@ -22,7 +20,7 @@ pub trait NumUnsigned: Clone {
     fn shifted_or_assign(&mut self, rhs: u8, shift: u32);
 }
 
-pub trait NumSigned: Clone {
+pub trait NumSigned {
     type UnsignedVariant: NumUnsigned;
 
     fn as_unsigned(&self) -> Self::UnsignedVariant;
@@ -121,31 +119,16 @@ pub fn decode_resume<T, I>(
     mut data: I,
     mut cur: T,
     mut shift: u32,
-    last_byte: u8,
+    mut byte: u8,
 ) -> Result<T, T>
 where
     T: NumUnsigned,
     I: Iterator<Item = u8>,
 {
-    if last_byte != 0 {
-        cur.shifted_or_assign(last_byte & 0x7F, shift - 7);
-        if last_byte & 0x80 == 0 {
-            decode_resume_extra_bits_check(
-                cur.clone(),
-                shift - 7,
-                last_byte,
-            )?;
-            return Ok(cur);
-        } else if shift >= T::BITS {
-            return Err(Error::DataTooBig {
-                cur,
-                shift,
-                byte: last_byte,
-            });
-        }
+    let mut first = byte == 0;
+    if first {
+        byte = data.next().ok_or(Error::EndOfData)?;
     }
-    let mut byte = data.next().ok_or(Error::EndOfData)?;
-    let mut first = last_byte == 0;
 
     loop {
         cur.shifted_or_assign(byte & 0x7F, shift);
@@ -160,36 +143,26 @@ where
 
         shift += 7;
         if shift >= T::BITS {
-            return Err(Error::DataTooBig { cur, shift, byte });
+            return Err(Error::DataTooBig {
+                cur,
+                shift: shift - 7,
+                byte,
+            });
         }
 
         byte = data.next().ok_or(Error::EndOfData)?;
         first = false;
     }
 
-    decode_resume_extra_bits_check(cur.clone(), shift, byte)?;
-
-    Ok(cur)
-}
-
-fn decode_resume_extra_bits_check<T: NumUnsigned>(
-    cur: T,
-    shift: u32,
-    byte: u8,
-) -> std::result::Result<(), Error<T>> {
     if shift > T::BITS - 7 {
         // extra bits mask
         let mask = !((1 << (T::BITS - shift)) - 1);
         if mask & byte != 0 {
-            return Err(Error::DataTooBig {
-                cur,
-                shift: shift + 7,
-                byte,
-            });
+            return Err(Error::DataTooBig { cur, shift, byte });
         }
     }
 
-    Ok(())
+    Ok(cur)
 }
 
 pub fn encode_signed(value: impl NumSigned, output: &mut Vec<u8>) {
@@ -225,55 +198,40 @@ pub fn decode_signed_resume<T, I>(
     mut data: I,
     mut cur: T::UnsignedVariant,
     mut shift: u32,
-    mut last_byte: u8,
+    mut byte: u8,
 ) -> Result<T, T::UnsignedVariant>
 where
     T: NumSigned,
     I: Iterator<Item = u8>,
 {
     let bits = T::UnsignedVariant::BITS;
-    if last_byte != 0 {
-        cur.shifted_or_assign(last_byte & 0x7F, shift - 7);
-        if last_byte & 0x80 == 0 {
-            let shift = shift - 7;
-            decode_signed_resume_extra_bits_check(
-                cur.clone(),
-                shift,
-                last_byte,
-            )?;
-
-            let mut res = T::from_unsigned(cur.clone());
-            if shift < bits - 7 && last_byte & 0x40 != 0 {
-                res.one_fill_left(shift + 7);
-            }
-
-            return Ok(res);
-        } else if shift >= bits {
-            return Err(Error::DataTooBig {
-                cur,
-                shift,
-                byte: last_byte,
-            });
-        }
+    let mut last_byte = 0;
+    let mut first = byte == 0;
+    if first {
+        byte = data.next().ok_or(Error::EndOfData)?;
     }
-    let mut byte = data.next().ok_or(Error::EndOfData)?;
-    let mut first = last_byte == 0;
 
     loop {
         cur.shifted_or_assign(byte & 0x7F, shift);
 
         if byte & 0x80 == 0 {
-            let pos = byte == 0 && last_byte & 0x40 == 0;
-            let neg = byte == 0x7F && last_byte & 0x40 != 0;
-            if (pos || neg) && !first {
-                return Err(Error::TrailingEmptyBytes);
+            if !first {
+                let pos = byte == 0 && last_byte & 0x40 == 0;
+                let neg = byte == 0x7F && last_byte & 0x40 != 0;
+                if pos || neg {
+                    return Err(Error::TrailingEmptyBytes);
+                }
             }
             break;
         }
 
         shift += 7;
         if shift >= bits {
-            return Err(Error::DataTooBig { cur, shift, byte });
+            return Err(Error::DataTooBig {
+                cur,
+                shift: shift - 7,
+                byte,
+            });
         }
 
         last_byte = byte;
@@ -281,7 +239,19 @@ where
         first = false;
     }
 
-    decode_signed_resume_extra_bits_check(cur.clone(), shift, byte)?;
+    if shift > bits - 7 {
+        // extra bits mask
+        let mask = !((1 << (bits - shift - 1)) - 1);
+        if byte & 0x40 != 0 {
+            if shift > bits - 7 && !(mask & byte | 0x80 | !mask) != 0 {
+                return Err(Error::DataTooBig { cur, shift, byte });
+            }
+        } else {
+            if shift > bits - 7 && mask & byte != 0 {
+                return Err(Error::DataTooBig { cur, shift, byte });
+            }
+        }
+    }
 
     let mut res = T::from_unsigned(cur);
     if shift < bits - 7 && byte & 0x40 != 0 {
@@ -289,37 +259,6 @@ where
     }
 
     Ok(res)
-}
-
-fn decode_signed_resume_extra_bits_check<T: NumUnsigned>(
-    cur: T,
-    shift: u32,
-    byte: u8,
-) -> std::result::Result<(), Error<T>> {
-    let bits = T::BITS;
-    if shift > bits - 7 {
-        // extra bits mask
-        let mask = !((1 << (bits - shift - 1)) - 1);
-        if byte & 0x40 != 0 {
-            if shift > bits - 7 && !(mask & byte | 0x80 | !mask) != 0 {
-                return Err(Error::DataTooBig {
-                    cur,
-                    shift: shift + 7,
-                    byte,
-                });
-            }
-        } else {
-            if shift > bits - 7 && mask & byte != 0 {
-                return Err(Error::DataTooBig {
-                    cur,
-                    shift: shift + 7,
-                    byte,
-                });
-            }
-        }
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -437,7 +376,7 @@ mod tests {
             res,
             Err(Error::DataTooBig {
                 cur: 0,
-                shift: 133,
+                shift: 126,
                 byte: 0x80
             })
         );
@@ -618,7 +557,7 @@ mod tests {
             res,
             Err(Error::DataTooBig {
                 cur: 0,
-                shift: 133,
+                shift: 126,
                 byte: 0x80
             })
         );
