@@ -1,6 +1,8 @@
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error<T: NumUnsigned> {
     EndOfData,
+    // NOTE: shift is one iteration ahead,
+    // so the byte is at (`shift` - 7)
     DataTooBig { cur: T, shift: u32, byte: u8 },
     TrailingEmptyBytes,
 }
@@ -127,6 +129,20 @@ where
 {
     if last_byte != 0 {
         cur.shifted_or_assign(last_byte & 0x7F, shift - 7);
+        if last_byte & 0x80 == 0 {
+            decode_resume_extra_bits_check(
+                cur.clone(),
+                shift - 7,
+                last_byte,
+            )?;
+            return Ok(cur);
+        } else if shift >= T::BITS {
+            return Err(Error::DataTooBig {
+                cur,
+                shift,
+                byte: last_byte,
+            });
+        }
     }
     let mut byte = data.next().ok_or(Error::EndOfData)?;
     let mut first = last_byte == 0;
@@ -151,15 +167,29 @@ where
         first = false;
     }
 
+    decode_resume_extra_bits_check(cur.clone(), shift, byte)?;
+
+    Ok(cur)
+}
+
+fn decode_resume_extra_bits_check<T: NumUnsigned>(
+    cur: T,
+    shift: u32,
+    byte: u8,
+) -> std::result::Result<(), Error<T>> {
     if shift > T::BITS - 7 {
         // extra bits mask
         let mask = !((1 << (T::BITS - shift)) - 1);
         if mask & byte != 0 {
-            return Err(Error::DataTooBig { cur, shift, byte });
+            return Err(Error::DataTooBig {
+                cur,
+                shift: shift + 7,
+                byte,
+            });
         }
     }
 
-    Ok(cur)
+    Ok(())
 }
 
 pub fn encode_signed(value: impl NumSigned, output: &mut Vec<u8>) {
@@ -201,11 +231,33 @@ where
     T: NumSigned,
     I: Iterator<Item = u8>,
 {
+    let bits = T::UnsignedVariant::BITS;
     if last_byte != 0 {
         cur.shifted_or_assign(last_byte & 0x7F, shift - 7);
+        if last_byte & 0x80 == 0 {
+            let shift = shift - 7;
+            decode_signed_resume_extra_bits_check(
+                cur.clone(),
+                shift,
+                last_byte,
+            )?;
+
+            let mut res = T::from_unsigned(cur.clone());
+            if shift < bits - 7 && last_byte & 0x40 != 0 {
+                res.one_fill_left(shift + 7);
+            }
+
+            return Ok(res);
+        } else if shift >= bits {
+            return Err(Error::DataTooBig {
+                cur,
+                shift,
+                byte: last_byte,
+            });
+        }
     }
-    let bits = T::UnsignedVariant::BITS;
     let mut byte = data.next().ok_or(Error::EndOfData)?;
+    let mut first = last_byte == 0;
 
     loop {
         cur.shifted_or_assign(byte & 0x7F, shift);
@@ -213,7 +265,7 @@ where
         if byte & 0x80 == 0 {
             let pos = byte == 0 && last_byte & 0x40 == 0;
             let neg = byte == 0x7F && last_byte & 0x40 != 0;
-            if (pos || neg) && last_byte != 0 {
+            if (pos || neg) && !first {
                 return Err(Error::TrailingEmptyBytes);
             }
             break;
@@ -226,35 +278,55 @@ where
 
         last_byte = byte;
         byte = data.next().ok_or(Error::EndOfData)?;
+        first = false;
     }
 
-    let mut res = T::from_unsigned(cur.clone());
+    decode_signed_resume_extra_bits_check(cur.clone(), shift, byte)?;
 
+    let mut res = T::from_unsigned(cur);
     if shift < bits - 7 && byte & 0x40 != 0 {
         res.one_fill_left(shift + 7);
     }
 
+    Ok(res)
+}
+
+fn decode_signed_resume_extra_bits_check<T: NumUnsigned>(
+    cur: T,
+    shift: u32,
+    byte: u8,
+) -> std::result::Result<(), Error<T>> {
+    let bits = T::BITS;
     if shift > bits - 7 {
         // extra bits mask
         let mask = !((1 << (bits - shift - 1)) - 1);
         if byte & 0x40 != 0 {
             if shift > bits - 7 && !(mask & byte | 0x80 | !mask) != 0 {
-                return Err(Error::DataTooBig { cur, shift, byte });
+                return Err(Error::DataTooBig {
+                    cur,
+                    shift: shift + 7,
+                    byte,
+                });
             }
         } else {
             if shift > bits - 7 && mask & byte != 0 {
-                return Err(Error::DataTooBig { cur, shift, byte });
+                return Err(Error::DataTooBig {
+                    cur,
+                    shift: shift + 7,
+                    byte,
+                });
             }
         }
     }
 
-    Ok(res)
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
         assert_matches,
+        fmt::Debug,
         iter::{once, repeat_n},
     };
 
@@ -262,22 +334,23 @@ mod tests {
 
     use super::*;
 
-    macro_rules! test_too_big {
-        ($buf:ident, $input:expr, $out:ty) => {
-            encode($input, &mut $buf);
-            let res = decode::<$out>(&$buf);
-            assert_matches!(res, Err(Error::DataTooBig { .. }));
-            $buf.clear();
-        };
-    }
-
-    macro_rules! test_too_big_signed {
-        ($buf:ident, $input:expr, $out:ty) => {
-            encode_signed($input, &mut $buf);
-            let res = decode_signed::<$out>(&$buf);
-            assert_matches!(res, Err(Error::DataTooBig { .. }));
-            $buf.clear();
-        };
+    fn test_uleb128_resume<TTry, TResume>(
+        data: &[u8],
+    ) -> Result<TResume, TResume>
+    where
+        TTry: NumUnsigned + Debug,
+        TResume: NumUnsigned + From<TTry>,
+    {
+        let mut data = data.iter().copied();
+        let res =
+            decode_resume::<TTry, _>(&mut data, TTry::from_u8(0), 0, 0);
+        match res {
+            Err(Error::DataTooBig { cur, shift, byte }) => {
+                decode_resume::<TResume, _>(data, cur.into(), shift, byte)
+            }
+            Ok(it) => Ok(it.into()),
+            it => unreachable!("{it:?}"),
+        }
     }
 
     #[test]
@@ -321,6 +394,26 @@ mod tests {
                 "case: {idx}, decode: {encoded:?}, expect: {v}"
             );
         }
+
+        let mut data = Vec::<u8>::new();
+        for v in [1 << 8, 1 << 15] {
+            data.clear();
+            encode(v, &mut data);
+
+            let res = test_uleb128_resume::<u8, u16>(&data);
+            assert_eq!(res, Ok(v));
+            let res = test_uleb128_resume::<u8, u8>(&data);
+            assert_eq!(res, decode::<u8>(&data));
+        }
+    }
+
+    macro_rules! test_too_big {
+        ($buf:ident, $input:expr, $out:ty) => {
+            encode($input, &mut $buf);
+            let res = decode::<$out>(&$buf);
+            assert_matches!(res, Err(Error::DataTooBig { .. }));
+            $buf.clear();
+        };
     }
 
     #[test]
@@ -397,6 +490,36 @@ mod tests {
         }
     }
 
+    fn test_sleb128_resume<TTry, TResume>(
+        data: &[u8],
+    ) -> Result<TResume, TResume::UnsignedVariant>
+    where
+        TTry: NumSigned + Debug,
+        TTry::UnsignedVariant: Debug,
+        TResume: NumSigned + From<TTry>,
+        TResume::UnsignedVariant: From<TTry::UnsignedVariant>,
+    {
+        let mut data = data.iter().copied();
+        let res = decode_signed_resume::<TTry, _>(
+            &mut data,
+            TTry::UnsignedVariant::from_u8(0),
+            0,
+            0,
+        );
+        match res {
+            Err(Error::DataTooBig { cur, shift, byte }) => {
+                decode_signed_resume::<TResume, _>(
+                    data,
+                    cur.into(),
+                    shift,
+                    byte,
+                )
+            }
+            Ok(it) => Ok(it.into()),
+            it => unreachable!("{it:?}"),
+        }
+    }
+
     #[test]
     fn sleb128() {
         let mut cases: Vec<(i128, Vec<u8>)> = vec![
@@ -450,6 +573,26 @@ mod tests {
                 "case: {idx}, decode: {encoded:?}, expect: {v}"
             );
         }
+
+        let mut data = Vec::<u8>::new();
+        for v in [1 << 8, 1 << 15] {
+            data.clear();
+            encode_signed(v, &mut data);
+
+            let res = test_sleb128_resume::<i8, i16>(&data);
+            assert_eq!(res, Ok(v));
+            let res = test_sleb128_resume::<i8, i8>(&data);
+            assert_eq!(res, decode_signed::<i8>(&data));
+        }
+    }
+
+    macro_rules! test_too_big_signed {
+        ($buf:ident, $input:expr, $out:ty) => {
+            encode_signed($input, &mut $buf);
+            let res = decode_signed::<$out>(&$buf);
+            assert_matches!(res, Err(Error::DataTooBig { .. }));
+            $buf.clear();
+        };
     }
 
     #[test]

@@ -1,0 +1,21 @@
+[package]
+name = "leb128-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.leb128]
+path = ".."
+
+[[bin]]
+name = "enc_dec_1_to_1"
+path = "fuzz_targets/enc_dec_1_to_1.rs"
+test = false
+doc = false
+bench = false
