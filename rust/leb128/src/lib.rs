@@ -1,3 +1,8 @@
+/*
+ * Copyright 2026 Golden_Water
+ * SPDX-License-Identifier: MIT
+ */
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error<T: NumUnsigned> {
     EndOfData,
