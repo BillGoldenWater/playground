@@ -1,8 +1,39 @@
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error<T: NumUnsigned> {
     EndOfData,
-    DataTooBig { cur: T, shift: u32, byte: u8 },
+    DataTooBig(DecodeState<T>),
     TrailingEmptyBytes,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DecodeState<T: NumUnsigned> {
+    cur: T,
+    shift: u32,
+    byte: u8,
+}
+
+impl<T: NumUnsigned> DecodeState<T> {
+    pub fn into_super<O>(self) -> DecodeState<O>
+    where
+        O: From<T>,
+        O: NumUnsigned,
+    {
+        DecodeState {
+            cur: self.cur.into(),
+            shift: self.shift,
+            byte: self.byte,
+        }
+    }
+}
+
+impl<T: NumUnsigned> Default for DecodeState<T> {
+    fn default() -> Self {
+        Self {
+            cur: T::from_u8(0),
+            shift: 0,
+            byte: 0,
+        }
+    }
 }
 
 pub type Result<T, UT> = core::result::Result<T, Error<UT>>;
@@ -112,19 +143,22 @@ pub fn encode(mut value: impl NumUnsigned, output: &mut Vec<u8>) {
 }
 
 pub fn decode<T: NumUnsigned>(data: &[u8]) -> Result<T, T> {
-    decode_resume(data.iter().copied(), T::from_u8(0), 0, 0)
+    decode_resume(data.iter().copied(), None)
 }
 
 pub fn decode_resume<T, I>(
     mut data: I,
-    mut cur: T,
-    mut shift: u32,
-    mut byte: u8,
+    state: Option<DecodeState<T>>,
 ) -> Result<T, T>
 where
     T: NumUnsigned,
     I: Iterator<Item = u8>,
 {
+    let DecodeState {
+        mut cur,
+        mut shift,
+        mut byte,
+    } = state.unwrap_or_default();
     let mut first = byte == 0;
     if first {
         byte = data.next().ok_or(Error::EndOfData)?;
@@ -143,11 +177,11 @@ where
 
         shift += 7;
         if shift >= T::BITS {
-            return Err(Error::DataTooBig {
+            return Err(Error::DataTooBig(DecodeState {
                 cur,
                 shift: shift - 7,
                 byte,
-            });
+            }));
         }
 
         byte = data.next().ok_or(Error::EndOfData)?;
@@ -158,7 +192,11 @@ where
         // extra bits mask
         let mask = !((1 << (T::BITS - shift)) - 1);
         if mask & byte != 0 {
-            return Err(Error::DataTooBig { cur, shift, byte });
+            return Err(Error::DataTooBig(DecodeState {
+                cur,
+                shift,
+                byte,
+            }));
         }
     }
 
@@ -186,25 +224,24 @@ pub fn encode_signed(value: impl NumSigned, output: &mut Vec<u8>) {
 pub fn decode_signed<T: NumSigned>(
     data: &[u8],
 ) -> Result<T, T::UnsignedVariant> {
-    decode_signed_resume(
-        data.iter().copied(),
-        T::UnsignedVariant::from_u8(0),
-        0,
-        0,
-    )
+    decode_signed_resume(data.iter().copied(), None)
 }
 
 pub fn decode_signed_resume<T, I>(
     mut data: I,
-    mut cur: T::UnsignedVariant,
-    mut shift: u32,
-    mut byte: u8,
+    state: Option<DecodeState<T::UnsignedVariant>>,
 ) -> Result<T, T::UnsignedVariant>
 where
     T: NumSigned,
     I: Iterator<Item = u8>,
 {
     let bits = T::UnsignedVariant::BITS;
+    let DecodeState {
+        mut cur,
+        mut shift,
+        mut byte,
+    } = state.unwrap_or_default();
+
     let mut last_byte = 0;
     let mut first = byte == 0;
     if first {
@@ -227,11 +264,11 @@ where
 
         shift += 7;
         if shift >= bits {
-            return Err(Error::DataTooBig {
+            return Err(Error::DataTooBig(DecodeState {
                 cur,
                 shift: shift - 7,
                 byte,
-            });
+            }));
         }
 
         last_byte = byte;
@@ -244,11 +281,19 @@ where
         let mask = !((1 << (bits - shift - 1)) - 1);
         if byte & 0x40 != 0 {
             if shift > bits - 7 && !(mask & byte | 0x80 | !mask) != 0 {
-                return Err(Error::DataTooBig { cur, shift, byte });
+                return Err(Error::DataTooBig(DecodeState {
+                    cur,
+                    shift,
+                    byte,
+                }));
             }
         } else {
             if shift > bits - 7 && mask & byte != 0 {
-                return Err(Error::DataTooBig { cur, shift, byte });
+                return Err(Error::DataTooBig(DecodeState {
+                    cur,
+                    shift,
+                    byte,
+                }));
             }
         }
     }
@@ -281,12 +326,12 @@ mod tests {
         TResume: NumUnsigned + From<TTry>,
     {
         let mut data = data.iter().copied();
-        let res =
-            decode_resume::<TTry, _>(&mut data, TTry::from_u8(0), 0, 0);
+        let res = decode_resume::<TTry, _>(&mut data, None);
         match res {
-            Err(Error::DataTooBig { cur, shift, byte }) => {
-                decode_resume::<TResume, _>(data, cur.into(), shift, byte)
-            }
+            Err(Error::DataTooBig(state)) => decode_resume::<TResume, _>(
+                data,
+                Some(state.into_super()),
+            ),
             Ok(it) => Ok(it.into()),
             it => unreachable!("{it:?}"),
         }
@@ -374,16 +419,23 @@ mod tests {
         let res = decode::<u128>(&repeat_n(0x80, 19).collect::<Vec<_>>());
         assert_matches!(
             res,
-            Err(Error::DataTooBig {
+            Err(Error::DataTooBig(DecodeState {
                 cur: 0,
                 shift: 126,
                 byte: 0x80
-            })
+            }))
         );
 
         let res = decode::<u128>(&[0x80, 0]);
         assert_matches!(res, Err(Error::TrailingEmptyBytes));
-        let res = decode_resume::<u128, _>(once(0), 0, 7, 0x80);
+        let res = decode_resume::<u128, _>(
+            once(0),
+            Some(DecodeState {
+                cur: 0,
+                shift: 7,
+                byte: 0x80,
+            }),
+        );
         assert_matches!(res, Err(Error::TrailingEmptyBytes));
 
         let mut data = vec![];
@@ -411,14 +463,12 @@ mod tests {
             assert_eq!(v, output, "case: {idx}, encode/decode: {v:?}");
 
             let mut data = data.iter().copied();
-            let res = decode_resume::<u64, _>(&mut data, 0, 0, 0);
+            let res = decode_resume::<u64, _>(&mut data, None);
             let output = match res {
-                Err(Error::DataTooBig { cur, shift, byte }) => {
+                Err(Error::DataTooBig(state)) => {
                     decode_resume::<u128, _>(
                         data,
-                        cur as u128,
-                        shift,
-                        byte,
+                        Some(state.into_super()),
                     )
                     .unwrap()
                 }
@@ -439,19 +489,12 @@ mod tests {
         TResume::UnsignedVariant: From<TTry::UnsignedVariant>,
     {
         let mut data = data.iter().copied();
-        let res = decode_signed_resume::<TTry, _>(
-            &mut data,
-            TTry::UnsignedVariant::from_u8(0),
-            0,
-            0,
-        );
+        let res = decode_signed_resume::<TTry, _>(&mut data, None);
         match res {
-            Err(Error::DataTooBig { cur, shift, byte }) => {
+            Err(Error::DataTooBig(state)) => {
                 decode_signed_resume::<TResume, _>(
                     data,
-                    cur.into(),
-                    shift,
-                    byte,
+                    Some(state.into_super()),
                 )
             }
             Ok(it) => Ok(it.into()),
@@ -555,11 +598,11 @@ mod tests {
         );
         assert_matches!(
             res,
-            Err(Error::DataTooBig {
+            Err(Error::DataTooBig(DecodeState {
                 cur: 0,
                 shift: 126,
                 byte: 0x80
-            })
+            }))
         );
 
         let res = decode_signed::<i128>(&[0x80, 0]);
@@ -603,14 +646,12 @@ mod tests {
             assert_eq!(v, output, "case: {idx}, encode/decode: {v:?}");
 
             let mut data = data.iter().copied();
-            let res = decode_signed_resume::<i64, _>(&mut data, 0, 0, 0);
+            let res = decode_signed_resume::<i64, _>(&mut data, None);
             let output = match res {
-                Err(Error::DataTooBig { cur, shift, byte }) => {
+                Err(Error::DataTooBig(state)) => {
                     decode_signed_resume::<i128, _>(
                         data,
-                        cur as u128,
-                        shift,
-                        byte,
+                        Some(state.into_super()),
                     )
                     .unwrap()
                 }
