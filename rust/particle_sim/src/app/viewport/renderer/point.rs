@@ -1,6 +1,7 @@
 use bytemuck::NoUninit;
-use cgmath::{vec2, Array, ElementWise, MetricSpace, Vector2};
+use cgmath::{Array, ElementWise, MetricSpace, Vector2, vec2};
 use itertools::Itertools as _;
+use tracing::info;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, NoUninit)]
 #[repr(C)]
@@ -10,39 +11,44 @@ pub struct Point {
 }
 
 impl Point {
-    pub fn gen() -> Vec<Point> {
-        let boundary_size = 1000_f32;
-        let size = 500_f32;
-        let spacing = 2.59_f32;
-        let num_per_axis = (size / spacing).floor() as usize;
-        let actual_size = (num_per_axis - 1) as f32 * spacing;
-
+    pub fn generate() -> Vec<Self> {
+        let boundary_size = 500_f64;
+        let target_size = 250_f64;
+        let spacing = 2.59_f64;
         let ball = true;
         let center = true;
 
-        let padding = (boundary_size - actual_size) / 2.0;
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss
+        )]
+        let num_per_axis = (target_size / spacing).floor() as u32;
+        let size = f64::from(num_per_axis - 1) * spacing;
+
+        let padding = (boundary_size - size) / 2.0;
         let padding = if center {
             Vector2::from_value(padding)
         } else {
             vec2(padding, 0.0)
         };
 
-        let radius = actual_size / 2.0;
+        let radius = size / 2.0;
         let center = padding.add_element_wise(radius);
 
         let points = (0..num_per_axis)
             .cartesian_product(0..num_per_axis)
-            .map(|(x, y)| Point {
-                pos: (vec2(x as f32, y as f32).mul_element_wise(spacing)
-                    + padding)
-                    .into(),
+            .map(|(x, y)| {
+                vec2(x, y).map(f64::from).mul_element_wise(spacing)
+                    + padding
+            })
+            .filter(|pos| !ball || pos.distance(center) <= radius)
+            .map(|pos| Self {
+                #[expect(clippy::cast_possible_truncation)]
+                pos: [pos.x as f32, pos.y as f32],
                 velocity: Default::default(),
             })
-            .filter(|it| {
-                !ball || Vector2::from(it.pos).distance(center) <= radius
-            })
             .collect_vec();
-        println!("generated {} points", points.len());
+        info!("generated {} points", points.len());
         points
 
         //let size = 500_f32;

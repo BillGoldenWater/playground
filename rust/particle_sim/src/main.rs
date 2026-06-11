@@ -1,4 +1,7 @@
 #![warn(missing_debug_implementations)]
+#![warn(clippy::pedantic, clippy::nursery)]
+// #![clippy::too_many_line_threshold = 60]
+#![allow(clippy::default_trait_access)]
 
 use std::{
     collections::VecDeque,
@@ -15,9 +18,18 @@ use winit::event_loop::{ControlFlow, EventLoop};
 
 use crate::app::App;
 
-#[tokio::main]
-async fn main() {
-    run().await.expect("failed to run");
+fn main() {
+    // SAFETY: at this time, there shouldn't be any other threads running
+    unsafe {
+        std::env::set_var("MTL_HUD_ENABLED", "1");
+    }
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(run())
+        .expect("fatal error occurs during execution");
 }
 
 mod app;
@@ -32,7 +44,6 @@ async fn run() -> anyhow::Result<()> {
                 .from_env_lossy(),
         )
         .init();
-    std::env::set_var("MTL_HUD_ENABLED", "1");
 
     let mut app = App {
         ctx: WgpuContext::new()

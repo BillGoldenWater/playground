@@ -8,9 +8,7 @@ use std::{
 use bytemuck::cast_slice;
 use tracing::info;
 use wgpu::{
-    include_wgsl,
-    util::{BufferInitDescriptor, DeviceExt},
-    vertex_attr_array, BindGroup, BindGroupDescriptor, BindGroupEntry,
+    BindGroup, BindGroupDescriptor, BindGroupEntry,
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer,
     BufferAddress, BufferBindingType, BufferDescriptor, BufferUsages,
     Color, ColorTargetState, ColorWrites, CommandEncoderDescriptor,
@@ -18,7 +16,9 @@ use wgpu::{
     Face, LoadOp, Operations, PipelineLayoutDescriptor,
     PushConstantRange, RenderPassColorAttachment, RenderPassDescriptor,
     RenderPipeline, ShaderStages, StoreOp, Surface, TextureView,
-    VertexBufferLayout, VertexStepMode,
+    VertexBufferLayout, VertexStepMode, include_wgsl,
+    util::{BufferInitDescriptor, DeviceExt},
+    vertex_attr_array,
 };
 use wgpu_bitonic_sort::BitonicSorter;
 
@@ -40,7 +40,9 @@ pub struct Renderer {
     pub points_buffer: Buffer,
     pub points_out_buffer: Buffer,
 
+    #[expect(unused)]
     pub points_hash_data_buffer: Buffer,
+    #[expect(unused)]
     pub points_hash_index_buffer: Buffer,
 
     pub compute_bind_group: BindGroup,
@@ -64,7 +66,7 @@ impl Renderer {
         } = &ctx;
 
         // data
-        let points = Point::gen();
+        let points = Point::generate();
 
         let points_buffer =
             device.create_buffer_init(&BufferInitDescriptor {
@@ -193,7 +195,9 @@ impl Renderer {
                 bind_group_layouts: &[&compute_bind_group_layout],
                 push_constant_ranges: &[PushConstantRange {
                     stages: ShaderStages::COMPUTE,
-                    range: 0..size_of::<Param>() as u32,
+                    range: 0..u32::try_from(size_of::<Param>()).expect(
+                        "size of this type shouldn't exceed 2^32",
+                    ),
                 }],
             });
 
@@ -332,10 +336,13 @@ impl Renderer {
             time_delta: 1f32 / 1000.0,
             ..*state
         }];
+        drop(state);
         let param_slice = cast_slice::<_, u8>(&param);
 
         // dimensions
-        let size = self.points.len() as f64;
+        let points_len = u32::try_from(self.points.len())
+            .expect("unsupported amount of points");
+        let size = points_len as f64;
         let x = (size as u32).min(65535);
         let y = ((size / 65535.0).ceil() as u32).min(65535);
         let z = (size / 65535.0 / 65535.0).ceil() as u32;
@@ -360,10 +367,12 @@ impl Renderer {
 
             encoder.finish()
         };
+        ctx.queue.submit([hash_data_cmd]);
 
         let sort_cmd = self
             .hash_data_sorter
-            .sort_command_buffer(&ctx.device, self.points.len() as u32);
+            .sort_command_buffer(&ctx.device, points_len);
+        ctx.queue.submit([sort_cmd]);
 
         // hash index & update points
         let hash_idx_upd_cmd = {
@@ -400,9 +409,7 @@ impl Renderer {
 
             encoder.finish()
         };
-
-        ctx.queue
-            .submit([hash_data_cmd, sort_cmd, hash_idx_upd_cmd]);
+        ctx.queue.submit([hash_idx_upd_cmd]);
     }
 
     pub fn render(&self, ctx: &WgpuContext, view: &TextureView) {
@@ -432,7 +439,11 @@ impl Renderer {
             rpass.set_pipeline(&self.render_pipeline);
             rpass.set_vertex_buffer(0, self.points_out_buffer.slice(..));
 
-            rpass.draw(0..6, 0..self.points.len() as u32);
+            rpass.draw(
+                0..6,
+                0..u32::try_from(self.points.len())
+                    .expect("unsupported amount of points"),
+            );
         }
 
         ctx.queue.submit(Some(encoder.finish()));

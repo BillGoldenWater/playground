@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use functional_utils::FunctionalUtils;
 use wgpu::{
     Device, PresentMode, Surface, SurfaceConfiguration,
@@ -38,8 +38,11 @@ impl Viewport {
                 size.width.max(1),
                 size.height.max(1),
             )
-            .ok_or(anyhow!("failed to get default surface config"))?;
+            .ok_or_else(|| {
+                anyhow!("failed to get default surface config")
+            })?;
         config.present_mode = PresentMode::Immediate;
+        config.desired_maximum_frame_latency = 4;
 
         surface.configure(&ctx.device, &config);
 

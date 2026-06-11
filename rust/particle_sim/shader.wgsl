@@ -122,7 +122,7 @@ const e = 2.718281828459045235360287471352f;
 const max_velocity_visual = 387f;
 const grid_size = 2.55f;
 const point_size = 2.0f;
-const boundary_size = 1000.0;
+const boundary_size = 500.0;
 
 const De = 0.409f;
 const a = 2.59f;
@@ -137,7 +137,7 @@ const edge_width = 0.1;
 const boundary_x = boundary_size;
 const boundary_y = boundary_size; 
 const boundary_margin = boundary_size * 0.2;
-const gravity = 0.1f;
+const gravity = 0.5f;
 // const speed = 1.0;
 
 const boundary_scaler = 1.0 / vec2<f32>(boundary_x, boundary_y);
@@ -145,7 +145,7 @@ const point_radius = point_size * boundary_scaler.x;
 // const point_radius_squared = point_radius * point_radius;
 
 const mouse_radius = point_size * 25;
-const mouse_strength = max_velocity_visual;
+const mouse_strength = max_velocity_visual * 0.5f;
 
 const gravity_center_count = 1u;
 const gravity_centers = array<vec2<f32>, gravity_center_count>(

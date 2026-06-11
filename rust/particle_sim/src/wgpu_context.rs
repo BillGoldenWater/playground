@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use functional_utils::FunctionalUtils;
 use tracing::info;
 use wgpu::{
@@ -24,7 +24,7 @@ impl WgpuContext {
                 ..Default::default()
             })
             .await
-            .ok_or(anyhow!("no adapter available"))?;
+            .ok_or_else(|| anyhow!("no adapter available"))?;
 
         info!("Adapter selected: {:?}", adapter.get_info());
 

@@ -149,7 +149,7 @@ impl BitonicSorter {
 
             let len = data_len.next_power_of_two();
             let size = ((len / 2) as f64).cbrt().ceil() as u32;
-            // incorrect, but works when not exceeding limit
+            // FIXME: proper size calculation
             let size = size.min(max_dim_size);
 
             for stage in successors(Some(2_u32), |it| it.checked_mul(2))
